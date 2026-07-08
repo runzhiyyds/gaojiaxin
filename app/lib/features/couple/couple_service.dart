@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:love_story/core/cache/app_cache.dart';
 import 'package:love_story/core/user_error.dart';
 import 'package:love_story/core/notifications/device_registration.dart';
 
@@ -26,6 +27,7 @@ class CoupleService extends ChangeNotifier {
   Map<String, dynamic>? _partnerProfile;
   bool _loading = true;
   String? _error;
+  String? _loadedUserId;
 
   String? get coupleSpaceId => _coupleSpaceId;
   String? get inviteCode => _inviteCode;
@@ -46,6 +48,8 @@ class CoupleService extends ChangeNotifier {
 
     final userId = _client.auth.currentUser?.id;
     if (userId == null) {
+      AppCache.instance.clear();
+      _loadedUserId = null;
       _coupleSpaceId = null;
       _inviteCode = null;
       _partnerId = null;
@@ -55,6 +59,19 @@ class CoupleService extends ChangeNotifier {
       notifyListeners();
       return;
     }
+
+    // 仅在真正切换账号时清空上一账号残留；普通 refresh 不能清，避免绑定页轮询把首页打成空态。
+    final switchedUser = _loadedUserId != null && _loadedUserId != userId;
+    if (switchedUser) {
+      AppCache.instance.clear();
+      _coupleSpaceId = null;
+      _inviteCode = null;
+      _partnerId = null;
+      _myProfile = null;
+      _partnerProfile = null;
+      notifyListeners();
+    }
+    _loadedUserId = userId;
 
     try {
       var res = await _client
@@ -83,6 +100,7 @@ class CoupleService extends ChangeNotifier {
       _coupleSpaceId = res['couple_space_id'] as String?;
       _inviteCode = res['invite_code'] as String?;
       _partnerId = null;
+      _partnerProfile = null;
 
       if (_coupleSpaceId != null) {
         final spaceRes = await _client
@@ -254,6 +272,35 @@ class CoupleService extends ChangeNotifier {
     }
   }
 
+  /// 已创建自己的邀请码但还未等到对方加入时，允许主动放弃当前邀请码并改为加入 TA 的空间。
+  Future<bool> switchToOtherInviteCode(String code) async {
+    _error = null;
+    final isPendingOwner =
+        _coupleSpaceId != null && _partnerId == null && (_inviteCode?.isNotEmpty ?? false);
+    if (!isPendingOwner) {
+      return joinWithCode(code);
+    }
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) return false;
+    try {
+      await _client.from('profiles').update({
+        'couple_space_id': null,
+        'invite_code': null,
+        'updated_at': DateTime.now().toIso8601String(),
+      }).eq('id', userId);
+      _coupleSpaceId = null;
+      _inviteCode = null;
+      _partnerId = null;
+      _partnerProfile = null;
+      notifyListeners();
+    } catch (e) {
+      _error = toUserMessage(e, context: 'switchToOtherInviteCode.releasePendingSpace');
+      notifyListeners();
+      return false;
+    }
+    return joinWithCode(code);
+  }
+
   /// 退出当前情侣空间：先更新空间（避免先清 profile 后 RLS 导致无法改空间），再清除自己的 profile 关联。
   /// 若为被邀请方(user_b)则清空 user_b_id；若为创建者(user_a)且对方已加入则转让给对方，否则仅清除自己 profile。
   Future<bool> leaveSpace() async {
@@ -286,6 +333,7 @@ class CoupleService extends ChangeNotifier {
       }
       await _client.from('profiles').update({
         'couple_space_id': null,
+        'invite_code': null,
         'updated_at': DateTime.now().toIso8601String(),
       }).eq('id', userId);
       await _loadBinding();

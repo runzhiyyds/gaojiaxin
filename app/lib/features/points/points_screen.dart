@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:love_story/core/cache/app_cache.dart';
 import 'package:love_story/core/connectivity_helper.dart';
 import 'package:love_story/core/theme.dart';
 import 'package:love_story/core/user_error.dart';
@@ -45,6 +46,7 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
   String? _lastUserId;
   String? _lastSpaceId;
   String? _lastPartnerId;
+  bool? _lastCoupleLoading;
 
   /// 用户主动下拉刷新时调用：先使缓存失效再拉取，保证看到最新数据。
   Future<void> _refresh() async {
@@ -61,7 +63,7 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
     context.read<DepositsRepository>().invalidateForSpace(spaceId);
   }
 
-  void _resetViewState() {
+  void _resetViewState({bool keepLoading = false}) {
     if (!mounted) return;
     setState(() {
       _items = [];
@@ -72,16 +74,34 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
       _myTotalSpent = 0;
       _myLocked = 0;
       _taLocked = 0;
-      _loading = false;
+      _loading = keepLoading;
     });
   }
 
   /// [silent] 为 true 时不显示 loading，用于 App 恢复时后台拉取最新数据，兼顾速度与实时性。
   Future<void> _load({bool silent = false}) async {
-    final spaceId = context.read<CoupleService>().coupleSpaceId;
-    final partnerId = context.read<CoupleService>().partnerId;
+    final couple = context.read<CoupleService>();
+    // 绑定信息仍在刷新时先占住 loading，避免切换账号后短暂显示空/0。
+    if (couple.loading) {
+      if (mounted && !silent) setState(() => _loading = true);
+      return;
+    }
+    final spaceId = couple.coupleSpaceId;
+    final partnerId = couple.partnerId;
     if (spaceId == null) {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _items = [];
+          _records = [];
+          _totalEarned = 0;
+          _totalSpent = 0;
+          _myTotalEarned = 0;
+          _myTotalSpent = 0;
+          _myLocked = 0;
+          _taLocked = 0;
+          _loading = false;
+        });
+      }
       return;
     }
     if (!silent) setState(() => _loading = true);
@@ -180,22 +200,40 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
     final currentUserId = auth.currentUser?.id;
     final currentSpaceId = couple.coupleSpaceId;
     final currentPartnerId = couple.partnerId;
-    final changed = currentUserId != _lastUserId ||
+    final currentCoupleLoading = couple.loading;
+    final userChanged = currentUserId != _lastUserId;
+    final changed = userChanged ||
         currentSpaceId != _lastSpaceId ||
-        currentPartnerId != _lastPartnerId;
+        currentPartnerId != _lastPartnerId ||
+        currentCoupleLoading != _lastCoupleLoading;
     if (!changed) return;
 
     final previousSpaceId = _lastSpaceId;
     _lastUserId = currentUserId;
     _lastSpaceId = currentSpaceId;
     _lastPartnerId = currentPartnerId;
+    _lastCoupleLoading = currentCoupleLoading;
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      if (userChanged) {
+        // 切账号必须清全局缓存，避免读到上一账号的 0/空列表。
+        AppCache.instance.clear();
+      }
       if (previousSpaceId != null && previousSpaceId != currentSpaceId) {
         _invalidateSpaceCaches(previousSpaceId);
       }
-      if (currentSpaceId == null || currentUserId == null) {
+      if (currentUserId == null) {
+        _channel?.unsubscribe();
+        _channel = null;
+        _resetViewState();
+        return;
+      }
+      if (currentCoupleLoading) {
+        _resetViewState(keepLoading: true);
+        return;
+      }
+      if (currentSpaceId == null) {
         _channel?.unsubscribe();
         _channel = null;
         _resetViewState();
@@ -203,7 +241,8 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
       }
       _invalidateSpaceCaches(currentSpaceId);
       _subscribeRealtime();
-      _load(silent: true);
+      // 换号/绑定完成后用可见 loading 重新拉，避免 silent 覆盖失败后仍显示旧空态。
+      _load(silent: false);
     });
   }
 

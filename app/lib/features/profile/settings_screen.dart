@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:love_story/core/theme.dart';
 import 'package:love_story/core/settings_prefs.dart';
 import 'package:love_story/features/auth/auth_service.dart';
 import 'package:love_story/features/couple/couple_service.dart';
@@ -30,11 +29,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _load() async {
     final weekday = await SettingsPrefs.getCycleStartWeekday();
     final notification = await SettingsPrefs.getNotificationEnabled();
-    if (mounted) setState(() {
-      _cycleStartWeekday = weekday;
-      _notificationEnabled = notification;
-      _loading = false;
-    });
+    if (mounted) {
+      setState(() {
+        _cycleStartWeekday = weekday;
+        _notificationEnabled = notification;
+        _loading = false;
+      });
+    }
   }
 
   Future<void> _pickCycleStart() async {
@@ -94,6 +95,58 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await context.read<AuthService>().signOut();
     if (!mounted) return;
     context.go('/login');
+  }
+
+  Future<void> _showAdvancedActions() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        final isBound = context.read<CoupleService>().isBound;
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  '更多账号与空间操作',
+                  style: Theme.of(sheetContext).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '以下操作影响较大，请确认后再继续。',
+                  style: Theme.of(sheetContext).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 16),
+                if (isBound)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.link_off, color: Theme.of(sheetContext).colorScheme.error),
+                    title: const Text('退出情侣空间'),
+                    subtitle: const Text('退出后需重新创建或输入邀请码才能再次关联'),
+                    onTap: () {
+                      Navigator.pop(sheetContext);
+                      _leaveSpace();
+                    },
+                  ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(Icons.logout, color: Theme.of(sheetContext).colorScheme.error),
+                  title: const Text('退出登录'),
+                  subtitle: const Text('清除当前账号登录状态，返回登录页'),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    _logout();
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _leaveSpace() async {
@@ -170,21 +223,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
             value: _notificationEnabled,
             onChanged: _setNotification,
           ),
-          if (isBound) ...[
-            const Divider(),
-            ListTile(
-              title: const Text('退出情侣空间'),
-              subtitle: const Text('退出后可重新输入邀请码加入其他空间'),
-              leading: Icon(Icons.link_off, color: Theme.of(context).colorScheme.error),
-              onTap: _leaveSpace,
-            ),
-          ],
           const Divider(),
           ListTile(
-            title: const Text('退出登录'),
-            subtitle: const Text('清除当前账号登录状态，返回登录页'),
-            leading: Icon(Icons.logout, color: Theme.of(context).colorScheme.error),
-            onTap: _logout,
+            title: const Text('更多账号与空间操作'),
+            subtitle: Text(
+              isBound ? '包含退出情侣空间、退出登录等高风险操作' : '包含退出登录等操作',
+            ),
+            leading: const Icon(Icons.admin_panel_settings_outlined),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: _showAdvancedActions,
           ),
         ],
       ),

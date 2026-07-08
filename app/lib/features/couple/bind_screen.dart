@@ -20,6 +20,7 @@ class _BindScreenState extends State<BindScreen> {
   bool _creating = false;
   bool _joining = false;
   bool _hasNavigatedToHome = false;
+  bool _showJoinOtherSpace = false;
   Timer? _pollTimer;
 
   @override
@@ -71,6 +72,7 @@ class _BindScreenState extends State<BindScreen> {
     if (!mounted) return;
     setState(() => _creating = false);
     if (ok) {
+      _codeController.clear();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('邀请码已生成，分享给 TA 吧')),
       );
@@ -91,7 +93,12 @@ class _BindScreenState extends State<BindScreen> {
       return;
     }
     setState(() => _joining = true);
-    final ok = await context.read<CoupleService>().joinWithCode(_codeController.text);
+    final couple = context.read<CoupleService>();
+    final shouldSwitch =
+        couple.isBound && !couple.hasPartner && (couple.inviteCode?.isNotEmpty ?? false);
+    final ok = shouldSwitch
+        ? await couple.switchToOtherInviteCode(_codeController.text)
+        : await couple.joinWithCode(_codeController.text);
     if (!mounted) return;
     setState(() => _joining = false);
     if (ok) {
@@ -151,7 +158,9 @@ class _BindScreenState extends State<BindScreen> {
                   const SizedBox(height: 8),
                   Text(
                     couple.inviteCode != null
-                        ? '将下方邀请码发给 TA，TA 注册/登录后输入即可完成绑定'
+                        ? couple.hasPartner
+                            ? '将下方邀请码发给 TA，TA 注册/登录后输入即可完成绑定'
+                            : '将下方邀请码发给 TA，TA 注册/登录后输入即可完成绑定；如果你想改为加入 TA 的空间，也可以切换'
                         : '创建空间生成邀请码发给 TA，或输入 TA 的邀请码加入',
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                           color: AppTheme.secondary,
@@ -198,6 +207,19 @@ class _BindScreenState extends State<BindScreen> {
                               '邀请码一次性有效，TA 输入后即失效',
                               style: Theme.of(context).textTheme.bodySmall,
                             ),
+                            if (!couple.hasPartner) ...[
+                              const SizedBox(height: 16),
+                              TextButton.icon(
+                                onPressed: () {
+                                  setState(() {
+                                    _showJoinOtherSpace = !_showJoinOtherSpace;
+                                    _codeController.clear();
+                                  });
+                                },
+                                icon: const Icon(Icons.swap_horiz, size: 18),
+                                label: Text(_showJoinOtherSpace ? '收起输入邀请码' : '改为输入 TA 的邀请码'),
+                              ),
+                            ],
                             if (couple.isBound) ...[
                               const SizedBox(height: 16),
                               OutlinedButton.icon(
@@ -211,6 +233,52 @@ class _BindScreenState extends State<BindScreen> {
                       ),
                     ),
                     const SizedBox(height: 24),
+                    if (_showJoinOtherSpace && !couple.hasPartner) ...[
+                      Card(
+                        child: Padding(
+                          padding: const EdgeInsets.all(20),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Text(
+                                '改为加入 TA 的空间',
+                                style: Theme.of(context).textTheme.titleMedium,
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                '输入 TA 的邀请码后，将放弃你当前已生成的邀请码，并加入 TA 的情侣空间。',
+                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                      color: AppTheme.secondary,
+                                    ),
+                              ),
+                              const SizedBox(height: 16),
+                              TextField(
+                                controller: _codeController,
+                                textCapitalization: TextCapitalization.characters,
+                                decoration: const InputDecoration(
+                                  labelText: 'TA 的邀请码',
+                                  hintText: '6 位大写字母或数字',
+                                  prefixIcon: Icon(Icons.link),
+                                ),
+                                maxLength: 6,
+                              ),
+                              const SizedBox(height: 8),
+                              FilledButton(
+                                onPressed: _joining ? null : _joinSpace,
+                                child: _joining
+                                    ? const SizedBox(
+                                        height: 22,
+                                        width: 22,
+                                        child: CircularProgressIndicator(strokeWidth: 2),
+                                      )
+                                    : const Text('放弃当前邀请码并加入'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                    ],
                   ] else if (couple.isBound) ...[
                     Card(
                       child: Padding(
