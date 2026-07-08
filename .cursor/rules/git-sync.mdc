@@ -1,0 +1,46 @@
+---
+description: 高佳欣项目 Git 与 GitHub 同步规范
+alwaysApply: true
+---
+
+# Git 同步规范（高佳欣 / gaojiaxin）
+
+## 远程仓库
+
+- **origin**: `https://github.com/runzhiyyds/gaojiaxin.git`
+- **默认分支**: `main`
+
+## 完成代码修改后的同步流程
+
+每次完成用户请求的代码变更后，在会话结束前执行以下步骤（用户未明确说「不要提交/推送」时）：
+
+1. `git status` 与 `git diff` — 确认变更范围
+2. `git add` — 只添加与本次任务相关的文件，**不要**提交：
+   - `pgyer_config.sh`、`app/env.json`（含 API Key / 密钥）
+   - `app/build/`、`.dart_tool/` 等构建产物
+3. `git commit` — 用简洁中文或英文说明「为什么」改
+4. `git push origin main` — 推送到 GitHub
+
+## 推送前检查
+
+- 若 `git status` 显示 `behind origin/main`，先 `git pull --rebase origin main` 再推送
+- 推送失败时先排查冲突或认证，修复后重试，不要跳过 hooks（除非用户明确要求）
+
+## 禁止操作
+
+- 不要 `git push --force` 到 `main`（除非用户明确要求）
+- 不要修改 `git config`
+- 不要提交含密钥、Token 的文件
+
+## 示例
+
+```bash
+git add <相关文件>
+git commit -m "$(cat <<'EOF'
+修复积分记录评论显示问题
+
+EOF
+)"
+git pull --rebase origin main
+git push origin main
+```

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "404883061250",
+    "project_id": "lovestory-b80c8",
+    "storage_bucket": "lovestory-b80c8.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:404883061250:android:8e7bb87e62627e024bc51b",
+        "android_client_info": {
+          "package_name": "com.lovestory.love_story"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAnRmuIUktFWonh-g3ru6NxwPDMST9UySw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

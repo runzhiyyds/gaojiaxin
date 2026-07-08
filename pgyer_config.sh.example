@@ -1,0 +1,5 @@
+# 蒲公英 API Key（仅用于 publish_new_version.sh 自动上传 APK）
+# 复制本文件为 pgyer_config.sh 并填入你的 Key，不要提交 pgyer_config.sh 到版本库。
+# 获取地址：https://www.pgyer.com/account/api
+
+export PGYER_API_KEY="b2ba6c424e09c0c9ec5f752511500e75"
