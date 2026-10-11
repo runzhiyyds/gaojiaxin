@@ -1,5 +1,6 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:love_story/core/connectivity_helper.dart';
+import 'package:love_story/core/load_feedback.dart';
 import 'package:love_story/core/theme.dart';
 import 'package:love_story/core/user_error.dart';
 import 'package:love_story/core/bind_prompt.dart';
@@ -26,60 +27,128 @@ class _MallScreenState extends State<MallScreen> with WidgetsBindingObserver {
   List<MallGoodModel> _goods = [];
   int _balance = 0;
   bool _loading = true;
+  bool _hasData = false;
+  String? _loadError;
+  int _loadVersion = 0;
+  Object? _lastIdentity;
+  bool? _lastBindingLoading;
+  Timer? _realtimeDebounce;
   RealtimeChannel? _channel;
 
-  Future<void> _load({bool silent = false}) async {
+  Future<void> _refresh() async {
+    if (!mounted) return;
     final spaceId = context.read<CoupleService>().coupleSpaceId;
+    if (spaceId != null) {
+      context.read<MallRepository>().invalidateForSpace(spaceId);
+      context.read<PointsRepository>().invalidateForSpace(spaceId);
+      context.read<DepositsRepository>().invalidateForSpace(spaceId);
+    }
+    await context.read<CoupleService>().refresh();
+    if (mounted) await _load();
+  }
+
+  Future<void> _load({bool silent = false}) async {
+    if (!mounted) return;
+    final version = ++_loadVersion;
+    final couple = context.read<CoupleService>();
+    final spaceId = couple.coupleSpaceId;
     final userId = context.read<AuthService>().currentUser?.id;
-    if (spaceId == null) {
-      if (mounted) setState(() => _loading = false);
+    if (couple.loading) return;
+    if (couple.error != null) {
+      setState(() {
+        _loading = false;
+        _loadError = couple.error;
+      });
       return;
     }
-    if (!silent) setState(() => _loading = true);
+    if (spaceId == null || userId == null) {
+      setState(() {
+        _goods = [];
+        _balance = 0;
+        _hasData = false;
+        _loading = false;
+        _loadError = null;
+      });
+      return;
+    }
+    setState(() {
+      _loading = !_hasData;
+      _loadError = null;
+    });
+    bool isCurrent() => mounted && version == _loadVersion &&
+        context.read<AuthService>().currentUser?.id == userId &&
+        context.read<CoupleService>().coupleSpaceId == spaceId;
     try {
       final mallRepo = context.read<MallRepository>();
-      final list = await mallRepo.getGoods(spaceId);
-      int balance = 0;
-      if (userId != null) {
-        final pointsRepo = context.read<PointsRepository>();
-        final depositsRepo = context.read<DepositsRepository>();
-        final earned = await pointsRepo.getTotalPointsEarned(spaceId, userId);
-        final spent = await mallRepo.getTotalPointsSpent(spaceId, userId);
-        final locked = await depositsRepo.getLockedPrincipal(spaceId, userId);
-        balance = earned - spent - locked;
-      }
-      if (mounted) setState(() {
-        _goods = list;
-        _balance = balance;
+      final pointsRepo = context.read<PointsRepository>();
+      final depositsRepo = context.read<DepositsRepository>();
+      final results = await Future.wait<Object>([
+        mallRepo.getGoods(spaceId),
+        pointsRepo.getTotalPointsEarned(spaceId, userId),
+        mallRepo.getTotalPointsSpent(spaceId, userId),
+        depositsRepo.getLockedPrincipal(spaceId, userId),
+      ], eagerError: true);
+      if (!isCurrent()) return;
+      setState(() {
+        _goods = results[0] as List<MallGoodModel>;
+        _balance = (results[1] as int) - (results[2] as int) - (results[3] as int);
+        _hasData = true;
         _loading = false;
       });
-    } catch (e) {
-      if (mounted) {
-        setState(() => _loading = false);
-        final msg = await isOffline()
-            ? '请检查网络'
-            : toUserMessage(e, context: '商城页加载');
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(msg)),
-          );
-        }
-      }
+    } catch (error) {
+      if (!isCurrent()) return;
+      setState(() {
+        _loading = false;
+        _loadError = toUserMessage(error, context: '商城页加载');
+      });
     }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final auth = context.watch<AuthService>();
+    final couple = context.watch<CoupleService>();
+    final identity = (auth.currentUser?.id, couple.coupleSpaceId, couple.partnerId);
+    final changed = identity != _lastIdentity;
+    if (!changed && _lastBindingLoading == couple.loading) return;
+    _lastIdentity = identity;
+    _lastBindingLoading = couple.loading;
+    if (changed) {
+      _loadVersion++;
+      _goods = [];
+      _balance = 0;
+      _hasData = false;
+      _loadError = null;
+      _loading = couple.loading;
+      _channel?.unsubscribe();
+      _channel = null;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || identity != _lastIdentity || couple.loading) return;
+      if (changed) _subscribeRealtime();
+      _load(silent: _hasData);
+    });
+  }
+
+  void _scheduleRealtimeReload() {
+    _realtimeDebounce?.cancel();
+    _realtimeDebounce = Timer(const Duration(milliseconds: 350), () {
+      if (mounted) _load(silent: true);
+    });
   }
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _load();
-      _subscribeRealtime();
-    });
+
   }
 
   @override
   void dispose() {
+    _loadVersion++;
+    _realtimeDebounce?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _channel?.unsubscribe();
     super.dispose();
@@ -106,22 +175,46 @@ class _MallScreenState extends State<MallScreen> with WidgetsBindingObserver {
           event: PostgresChangeEvent.all,
           schema: 'public',
           table: 'mall_goods',
+          filter: PostgresChangeFilter(type: PostgresChangeFilterType.eq,
+              column: 'couple_space_id', value: spaceId),
           callback: (payload) {
             if (!mounted) return;
             context.read<MallRepository>().invalidateForSpace(spaceId);
             context.read<PointsRepository>().invalidateForSpace(spaceId);
-            _load();
+            _scheduleRealtimeReload();
           },
         )
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
           schema: 'public',
           table: 'exchange_records',
+          filter: PostgresChangeFilter(type: PostgresChangeFilterType.eq,
+              column: 'couple_space_id', value: spaceId),
           callback: (payload) {
             if (!mounted) return;
             context.read<MallRepository>().invalidateForSpace(spaceId);
             context.read<PointsRepository>().invalidateForSpace(spaceId);
-            _load();
+            _scheduleRealtimeReload();
+          },
+        )
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all, schema: 'public', table: 'point_records',
+          filter: PostgresChangeFilter(type: PostgresChangeFilterType.eq,
+              column: 'couple_space_id', value: spaceId),
+          callback: (_) {
+            if (!mounted) return;
+            context.read<PointsRepository>().invalidateForSpace(spaceId);
+            _scheduleRealtimeReload();
+          },
+        )
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all, schema: 'public', table: 'point_deposits',
+          filter: PostgresChangeFilter(type: PostgresChangeFilterType.eq,
+              column: 'couple_space_id', value: spaceId),
+          callback: (_) {
+            if (!mounted) return;
+            context.read<DepositsRepository>().invalidateForSpace(spaceId);
+            _scheduleRealtimeReload();
           },
         )
         .subscribe();
@@ -162,9 +255,15 @@ class _MallScreenState extends State<MallScreen> with WidgetsBindingObserver {
           ),
         ],
       ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _buildBody(context, isLoggedIn, hasPartner, partnerName),
+      body: _loadError != null && !_hasData
+          ? LoadFeedback(message: _loadError!, onRetry: _refresh)
+          : _loading
+              ? const Center(child: CircularProgressIndicator())
+              : Column(children: [
+                  if (_loadError != null)
+                    RefreshNotice(message: _loadError!, onRetry: _refresh),
+                  Expanded(child: _buildBody(context, isLoggedIn, hasPartner, partnerName)),
+                ]),
     );
   }
 
@@ -266,7 +365,7 @@ class _MallScreenState extends State<MallScreen> with WidgetsBindingObserver {
 
     if (_goods.isEmpty) {
       return RefreshIndicator(
-        onRefresh: _load,
+        onRefresh: _refresh,
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.all(16),
@@ -327,7 +426,7 @@ class _MallScreenState extends State<MallScreen> with WidgetsBindingObserver {
     final itemCount = 2 + tiers.fold<int>(0, (s, t) => s + 1 + t.goods.length);
 
     return RefreshIndicator(
-      onRefresh: _load,
+      onRefresh: _refresh,
       child: ListView.builder(
         padding: const EdgeInsets.all(16),
         itemCount: itemCount,

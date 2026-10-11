@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'package:http/http.dart' as http;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:love_story/core/user_error.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -74,7 +76,7 @@ void main() {
 
       test('generic auth -> 登录失败', () {
         final e = AuthException('Unknown auth error');
-        expect(toUserMessage(e), 'Unknown auth error');
+        expect(toUserMessage(e), '登录失败，请稍后重试。');
       });
     });
 
@@ -82,7 +84,7 @@ void main() {
       test('兑换余额不足', () {
         expect(
           toUserMessage(Exception('兑换余额不足')),
-          '兑换余额不足，请先积累积分后再兑换。',
+          '兑换余额不足，请先积累心意值后再兑换。',
         );
       });
 
@@ -101,6 +103,19 @@ void main() {
       });
     });
 
+    test('auth-wrapped socket timeout is actionable without exposing internals', () {
+      final message = toUserMessage(AuthRetryableFetchException(
+          message: 'ClientException with SocketException: Connection timed out, uri=https://secret.test'));
+      expect(message, '连接服务超时，请切换 Wi-Fi 或移动网络后重试。');
+      expect(message, isNot(contains('secret.test')));
+    });
+    test('direct timeout', () {
+      expect(toUserMessage(TimeoutException('timeout')), contains('连接服务超时'));
+    });
+    test('DNS failure', () {
+      expect(toUserMessage(http.ClientException('Failed host lookup')),
+          '暂时无法连接服务，请检查网络或切换网络后重试。');
+    });
     test('unknown exception -> 操作失败请稍后重试', () {
       expect(
         toUserMessage(Exception('Network error')),

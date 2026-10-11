@@ -14,15 +14,6 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final auth = context.read<AuthService>();
-      if (!auth.isLoggedIn) auth.autoSignIn();
-    });
-  }
-
-  @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthService>();
     if (!auth.isLoggedIn) {

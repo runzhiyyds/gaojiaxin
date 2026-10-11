@@ -7,17 +7,22 @@ import 'package:love_story/core/user_error.dart';
 import 'package:love_story/core/notifications/device_registration.dart';
 
 class CoupleService extends ChangeNotifier {
-  CoupleService() {
+  CoupleService({SupabaseClient? client})
+      : _client = client ?? Supabase.instance.client {
     _authSubscription = _client.auth.onAuthStateChange.listen((_) {
-      _loadBinding();
+      final userId = _client.auth.currentUser?.id;
+      if (userId == _loadedUserId && _hasLoaded && _error == null) return;
+      unawaited(_loadBinding());
+    }, onError: (Object error, StackTrace stack) {
+      // Keep the binding during a transient background token-refresh failure.
     });
-    _loadBinding();
+    unawaited(_loadBinding());
   }
 
   static const _inviteCodeChars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   static const _inviteCodeLength = 6;
 
-  final SupabaseClient _client = Supabase.instance.client;
+  final SupabaseClient _client;
   late final StreamSubscription<AuthState> _authSubscription;
 
   String? _coupleSpaceId;
@@ -28,11 +33,17 @@ class CoupleService extends ChangeNotifier {
   bool _loading = true;
   String? _error;
   String? _loadedUserId;
+  Future<void>? _bindingRequest;
+  int _generation = 0;
+  bool _hasLoaded = false;
+  bool _disposed = false;
 
   String? get coupleSpaceId => _coupleSpaceId;
   String? get inviteCode => _inviteCode;
+
   /// 对方用户 id，未关联时为 null
   String? get partnerId => _partnerId;
+
   /// 对方是否已注册并关联（user_b_id 已填）
   bool get hasPartner => _partnerId != null;
   Map<String, dynamic>? get myProfile => _myProfile;
@@ -41,109 +52,130 @@ class CoupleService extends ChangeNotifier {
   String? get error => _error;
   bool get isBound => _coupleSpaceId != null && _coupleSpaceId!.isNotEmpty;
 
-  Future<void> _loadBinding() async {
-    _loading = true;
-    _error = null;
-    notifyListeners();
-
+  Future<void> _loadBinding({bool force = false}) {
     final userId = _client.auth.currentUser?.id;
-    if (userId == null) {
-      AppCache.instance.clear();
-      _loadedUserId = null;
-      _coupleSpaceId = null;
-      _inviteCode = null;
-      _partnerId = null;
-      _myProfile = null;
-      _partnerProfile = null;
-      _loading = false;
-      notifyListeners();
-      return;
+    if (!force && _bindingRequest != null && userId == _loadedUserId) {
+      return _bindingRequest!;
     }
-
-    // 仅在真正切换账号时清空上一账号残留；普通 refresh 不能清，避免绑定页轮询把首页打成空态。
-    final switchedUser = _loadedUserId != null && _loadedUserId != userId;
-    if (switchedUser) {
+    final generation = ++_generation;
+    if (_loadedUserId != userId || userId == null) {
       AppCache.instance.clear();
       _coupleSpaceId = null;
       _inviteCode = null;
       _partnerId = null;
       _myProfile = null;
       _partnerProfile = null;
-      notifyListeners();
+      _hasLoaded = false;
     }
     _loadedUserId = userId;
-
-    try {
-      var res = await _client
-          .from('profiles')
-          .select()
-          .eq('id', userId)
-          .maybeSingle();
-      if (res == null) {
-        _loading = false;
-        notifyListeners();
-        return;
-      }
-      final meta = _client.auth.currentUser?.userMetadata;
-      final metaNickname = meta?['nickname']?.toString().trim();
-      final profileNickname = res['nickname']?.toString().trim();
-      if ((profileNickname == null || profileNickname.isEmpty) &&
-          metaNickname != null &&
-          metaNickname.isNotEmpty) {
-        await _client.from('profiles').update({
-          'nickname': metaNickname,
-          'updated_at': DateTime.now().toIso8601String(),
-        }).eq('id', userId);
-        res = await _client.from('profiles').select().eq('id', userId).single();
-      }
-      _myProfile = Map<String, dynamic>.from(res as Map);
-      _coupleSpaceId = res['couple_space_id'] as String?;
-      _inviteCode = res['invite_code'] as String?;
-      _partnerId = null;
-      _partnerProfile = null;
-
-      if (_coupleSpaceId != null) {
-        final spaceRes = await _client
-            .from('couple_spaces')
-            .select()
-            .eq('id', _coupleSpaceId!)
-            .maybeSingle();
-        if (spaceRes != null) {
-          final space = Map<String, dynamic>.from(spaceRes);
-          final userA = space['user_a_id'] as String?;
-          final userB = space['user_b_id'] as String?;
-          final isUserA = userId == userA;
-          final isUserB = userId == userB;
-          if (!isUserA && !isUserB) {
-            await _client.from('profiles').update({
-              'couple_space_id': null,
-              'updated_at': DateTime.now().toIso8601String(),
-            }).eq('id', userId);
-            _coupleSpaceId = null;
-            _inviteCode = null;
-          } else {
-            final partnerId = isUserA ? userB : userA;
-            _partnerId = partnerId;
-            if (partnerId != null) {
-              final partnerRes = await _client
-                  .from('profiles')
-                  .select()
-                  .eq('id', partnerId)
-                  .maybeSingle();
-              if (partnerRes != null) {
-                _partnerProfile = Map<String, dynamic>.from(partnerRes as Map);
-              }
-            }
-          }
-        }
-      }
-
-      _registerDeviceInBackground();
-    } catch (e) {
-      _error = toUserMessage(e, context: '_loadBinding');
+    _loading = userId != null;
+    _error = null;
+    notifyListeners();
+    if (userId == null) {
+      _bindingRequest = null;
+      return Future.value();
     }
+    final request = _performLoad(userId, generation);
+    _bindingRequest = request;
+    unawaited(request.whenComplete(() {
+      if (generation == _generation) _bindingRequest = null;
+    }));
+    return request;
+  }
+
+  bool _isCurrent(String userId, int generation) =>
+      !_disposed &&
+      generation == _generation &&
+      _client.auth.currentUser?.id == userId;
+
+  Future<void> _performLoad(String userId, int generation) async {
+    try {
+      final binding =
+          await _fetchBinding(userId).timeout(const Duration(seconds: 14));
+      if (!_isCurrent(userId, generation)) return;
+      _myProfile = binding.profile;
+      _coupleSpaceId = binding.spaceId;
+      _inviteCode = binding.inviteCode;
+      _partnerId = binding.partnerId;
+      _partnerProfile = binding.partner;
+      _hasLoaded = true;
+      _registerDeviceInBackground();
+    } catch (error) {
+      if (!_isCurrent(userId, generation)) return;
+      _error = toUserMessage(error, context: '加载情侣空间');
+    }
+    if (!_isCurrent(userId, generation)) return;
     _loading = false;
     notifyListeners();
+  }
+
+  Future<
+      ({
+        Map<String, dynamic>? profile,
+        String? spaceId,
+        String? inviteCode,
+        String? partnerId,
+        Map<String, dynamic>? partner
+      })> _fetchBinding(String userId) async {
+    final profile =
+        await _client.from('profiles').select().eq('id', userId).maybeSingle();
+    if (profile == null) {
+      throw StateError('账号资料尚未同步');
+    }
+    final metaNickname =
+        _client.auth.currentUser?.userMetadata?['nickname']?.toString().trim();
+    final profileNickname = profile['nickname']?.toString().trim();
+    if ((profileNickname == null || profileNickname.isEmpty) &&
+        metaNickname != null &&
+        metaNickname.isNotEmpty &&
+        _client.auth.currentUser?.id == userId) {
+      await _client.from('profiles').update({
+        'nickname': metaNickname,
+        'updated_at': DateTime.now().toIso8601String(),
+      }).eq('id', userId);
+      profile['nickname'] = metaNickname;
+    }
+    var spaceId = profile['couple_space_id'] as String?;
+    var inviteCode = profile['invite_code'] as String?;
+    String? partnerId;
+    Map<String, dynamic>? partner;
+    if (spaceId != null) {
+      final space = await _client
+          .from('couple_spaces')
+          .select('user_a_id,user_b_id')
+          .eq('id', spaceId)
+          .maybeSingle();
+      final userA = space?['user_a_id'] as String?;
+      final userB = space?['user_b_id'] as String?;
+      if (space == null) {
+        // A missing/inaccessible space is not evidence that binding was removed.
+        throw StateError('暂时无法读取情侣空间');
+      }
+      if (userId != userA && userId != userB) {
+        await _client.from('profiles').update({
+          'couple_space_id': null,
+          'updated_at': DateTime.now().toIso8601String(),
+        }).eq('id', userId);
+        spaceId = null;
+        inviteCode = null;
+      } else {
+        partnerId = userId == userA ? userB : userA;
+        if (partnerId != null) {
+          partner = await _client
+              .from('profiles')
+              .select()
+              .eq('id', partnerId)
+              .maybeSingle();
+        }
+      }
+    }
+    return (
+      profile: profile,
+      spaceId: spaceId,
+      inviteCode: inviteCode,
+      partnerId: partnerId,
+      partner: partner
+    );
   }
 
   void _registerDeviceInBackground() {
@@ -178,7 +210,7 @@ class CoupleService extends ChangeNotifier {
     final userId = _client.auth.currentUser?.id;
     if (userId == null) return false;
     if (_coupleSpaceId != null) {
-      await _loadBinding();
+      await _loadBinding(force: true);
       return true;
     }
     try {
@@ -194,10 +226,14 @@ class CoupleService extends ChangeNotifier {
         return false;
       }
       final code = _generateInviteCode();
-      final spaceRes = await _client.from('couple_spaces').insert({
-        'user_a_id': userId,
-        'user_b_id': null,
-      }).select('id').single();
+      final spaceRes = await _client
+          .from('couple_spaces')
+          .insert({
+            'user_a_id': userId,
+            'user_b_id': null,
+          })
+          .select('id')
+          .single();
       final spaceId = (spaceRes as Map)['id'] as String;
       await _client.from('profiles').update({
         'couple_space_id': spaceId,
@@ -244,7 +280,7 @@ class CoupleService extends ChangeNotifier {
       }
       final success = data['success'] == true;
       if (success) {
-        await _loadBinding();
+        await _loadBinding(force: true);
         return true;
       }
       final err = data['error']?.toString() ?? '';
@@ -275,8 +311,9 @@ class CoupleService extends ChangeNotifier {
   /// 已创建自己的邀请码但还未等到对方加入时，允许主动放弃当前邀请码并改为加入 TA 的空间。
   Future<bool> switchToOtherInviteCode(String code) async {
     _error = null;
-    final isPendingOwner =
-        _coupleSpaceId != null && _partnerId == null && (_inviteCode?.isNotEmpty ?? false);
+    final isPendingOwner = _coupleSpaceId != null &&
+        _partnerId == null &&
+        (_inviteCode?.isNotEmpty ?? false);
     if (!isPendingOwner) {
       return joinWithCode(code);
     }
@@ -294,7 +331,8 @@ class CoupleService extends ChangeNotifier {
       _partnerProfile = null;
       notifyListeners();
     } catch (e) {
-      _error = toUserMessage(e, context: 'switchToOtherInviteCode.releasePendingSpace');
+      _error = toUserMessage(e,
+          context: 'switchToOtherInviteCode.releasePendingSpace');
       notifyListeners();
       return false;
     }
@@ -336,7 +374,7 @@ class CoupleService extends ChangeNotifier {
         'invite_code': null,
         'updated_at': DateTime.now().toIso8601String(),
       }).eq('id', userId);
-      await _loadBinding();
+      await _loadBinding(force: true);
       return true;
     } catch (e) {
       _error = toUserMessage(e, context: 'leaveSpace');
@@ -347,6 +385,8 @@ class CoupleService extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
+    _generation++;
     _authSubscription.cancel();
     super.dispose();
   }

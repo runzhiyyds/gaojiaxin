@@ -19,43 +19,41 @@ class MallRepository {
   /// 获取指定用户（owner）的商城商品列表。
   Future<List<MallGoodModel>> getGoodsByOwner(String coupleSpaceId, String ownerUserId) async {
     final key = '$_kGoodsOwner$coupleSpaceId:$ownerUserId';
-    final cached = _cache.get<List<MallGoodModel>>(key);
-    if (cached != null) return cached;
-    final res = await withSupabaseCall(
-      () => _client
-          .from('mall_goods')
-          .select()
-          .eq('couple_space_id', coupleSpaceId)
-          .eq('owner_id', ownerUserId)
-          .order('sort_order'),
-      isRead: true,
-    );
-    final list = (res as List)
-        .map((e) => MallGoodModel.fromJson(Map<String, dynamic>.from(e as Map)))
-        .toList();
-    _cache.set(key, list);
-    return list;
+    return _cache.getOrLoad(key, () async {
+      final res = await withSupabaseCall(
+        () => _client
+            .from('mall_goods')
+            .select()
+            .eq('couple_space_id', coupleSpaceId)
+            .eq('owner_id', ownerUserId)
+            .order('sort_order'),
+        isRead: true,
+      );
+      final list = (res as List)
+          .map((e) => MallGoodModel.fromJson(Map<String, dynamic>.from(e as Map)))
+          .toList();
+      return list;
+    });
   }
 
   /// 获取空间内全部商品（情侣空间双方可见、可管理）
   Future<List<MallGoodModel>> getGoods(String coupleSpaceId) async {
     final key = '$_kGoods$coupleSpaceId';
-    final cached = _cache.get<List<MallGoodModel>>(key);
-    if (cached != null) return cached;
-    final res = await withSupabaseCall(
-      () => _client
-          .from('mall_goods')
-          .select()
-          .eq('couple_space_id', coupleSpaceId)
-          .order('category', nullsFirst: false)
-          .order('sort_order'),
-      isRead: true,
-    );
-    final list = (res as List)
-        .map((e) => MallGoodModel.fromJson(Map<String, dynamic>.from(e as Map)))
-        .toList();
-    _cache.set(key, list);
-    return list;
+    return _cache.getOrLoad(key, () async {
+      final res = await withSupabaseCall(
+        () => _client
+            .from('mall_goods')
+            .select()
+            .eq('couple_space_id', coupleSpaceId)
+            .order('category', nullsFirst: false)
+            .order('sort_order'),
+        isRead: true,
+      );
+      final list = (res as List)
+          .map((e) => MallGoodModel.fromJson(Map<String, dynamic>.from(e as Map)))
+          .toList();
+      return list;
+    });
   }
 
   Future<MallGoodModel?> getGood(String id) async {
@@ -155,19 +153,18 @@ class MallRepository {
   /// 兑换余额线：该用户累计兑换消耗的积分
   Future<int> getTotalPointsSpent(String coupleSpaceId, String userId) async {
     final key = '$_kSpent$coupleSpaceId:$userId';
-    final cached = _cache.get<int>(key);
-    if (cached != null) return cached;
-    final res = await _client
-        .from('exchange_records')
-        .select('points_spent')
-        .eq('couple_space_id', coupleSpaceId)
-        .eq('user_id', userId);
-    var sum = 0;
-    for (final row in res as List) {
-      sum += (row['points_spent'] as num).toInt();
-    }
-    _cache.set(key, sum);
-    return sum;
+    return _cache.getOrLoad(key, () async {
+      final res = await _client
+          .from('exchange_records')
+          .select('points_spent')
+          .eq('couple_space_id', coupleSpaceId)
+          .eq('user_id', userId);
+      var sum = 0;
+      for (final row in res as List) {
+        sum += (row['points_spent'] as num).toInt();
+      }
+      return sum;
+    });
   }
 
   Future<List<ExchangeRecordModel>> getExchangeHistory(

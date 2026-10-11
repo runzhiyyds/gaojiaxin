@@ -201,10 +201,13 @@ Future<bool> showPgyerUpdateDialogWithInAppInstall(
   final result = await showDialog<bool>(
     context: context,
     barrierDismissible: !info.needForceUpdate,
-    builder: (ctx) => _PgyerUpdateDialogWithInstallContent(
+    builder: (ctx) => PopScope(
+      canPop: !info.needForceUpdate,
+      child: _PgyerUpdateDialogWithInstallContent(
       info: info,
       openUrl: openUrl,
       openInAppForFallback: openInAppForFallback,
+      ),
     ),
   );
   return result ?? false;

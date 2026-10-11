@@ -10,7 +10,7 @@
 
 ## 环境要求
 
-- Flutter SDK >= 3.0（建议 3.16+）
+- Flutter：本次已验证 3.41.1 / Dart 3.11.0，Dart 依赖最低要求 3.4
 - 已配置 Android 开发环境（打 APK）
 - Supabase 项目（用于登录、绑定、积分与商城数据）
 
@@ -80,7 +80,7 @@ flutter build apk --release --dart-define=SUPABASE_URL=xxx --dart-define=SUPABAS
    shorebird patch
    ```
 
-应用启动时会自动检查并下载可用更新（见 `lib/features/splash/splash_screen.dart`）。
+应用显示首屏后在后台检查和下载可用更新，不阻塞登录与首页（见 `app/lib/core/background_tasks.dart`）。
 
 ## 应用名称与图标
 
@@ -89,6 +89,7 @@ flutter build apk --release --dart-define=SUPABASE_URL=xxx --dart-define=SUPABAS
 
 ## 文档
 
+- [性能与体验优化记录](docs/性能与体验优化-2026-10-11.md)
 - [产品说明](docs/产品说明.md)
 - [UI 规范](docs/UI规范.md)
 - [Supabase 表结构](docs/supabase_schema.sql)
@@ -102,3 +103,7 @@ flutter build apk --release --dart-define=SUPABASE_URL=xxx --dart-define=SUPABAS
 ## 深色模式
 
 已支持系统跟随的深色模式（`ThemeMode.system`），无需额外配置。
+
+## 变更同步
+
+客户端变更统一同步到 [runzhiyyds/gaojiaxin](https://github.com/runzhiyyds/gaojiaxin)，具体协作约定见 [AGENTS.md](AGENTS.md)。

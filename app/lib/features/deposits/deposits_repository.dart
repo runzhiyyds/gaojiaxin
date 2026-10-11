@@ -63,20 +63,19 @@ class DepositsRepository {
   /// 当前用户在该空间下锁定在定期中的本金总和（status=active）
   Future<int> getLockedPrincipal(String coupleSpaceId, String userId) async {
     final key = '$_kLocked$coupleSpaceId:$userId';
-    final cached = _cache.get<int>(key);
-    if (cached != null) return cached;
-    final res = await _client
-        .from('point_deposits')
-        .select('principal')
-        .eq('couple_space_id', coupleSpaceId)
-        .eq('user_id', userId)
-        .eq('status', 'active');
-    var sum = 0;
-    for (final row in res as List) {
-      sum += (row['principal'] as num).toInt();
-    }
-    _cache.set(key, sum);
-    return sum;
+    return _cache.getOrLoad(key, () async {
+      final res = await _client
+          .from('point_deposits')
+          .select('principal')
+          .eq('couple_space_id', coupleSpaceId)
+          .eq('user_id', userId)
+          .eq('status', 'active');
+      var sum = 0;
+      for (final row in res as List) {
+        sum += (row['principal'] as num).toInt();
+      }
+      return sum;
+    });
   }
 
   /// 当前用户的定期存款列表（含已兑付/提前支取），按创建时间倒序

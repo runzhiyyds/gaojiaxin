@@ -1,14 +1,8 @@
-import 'dart:async';
-
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:love_story/core/theme.dart';
-import 'package:love_story/core/pgyer_update.dart';
 import 'package:provider/provider.dart';
 import 'package:love_story/features/auth/auth_service.dart';
-import 'package:love_story/features/couple/couple_service.dart';
-import 'package:shorebird_code_push/shorebird_code_push.dart' show ShorebirdUpdater, UpdateStatus;
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -24,97 +18,12 @@ class _SplashScreenState extends State<SplashScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _redirect());
   }
 
-  Future<void> _redirect() async {
-    await Future.delayed(const Duration(milliseconds: 1200));
+  void _redirect() {
     if (!mounted) return;
-    // Shorebird 检查可能挂起（非 Shorebird 构建或网络问题），加超时跳过
-    try {
-      await Future.any([
-        () async {
-          final updater = ShorebirdUpdater();
-          final status = await updater.checkForUpdate();
-          if (status == UpdateStatus.outdated) {
-            await updater.update();
-          }
-        }(),
-        Future.delayed(const Duration(seconds: 5)),
-      ]);
-    } catch (_) {}
-    if (!mounted) return;
-    try {
-      await _doRedirect().timeout(
-        const Duration(seconds: 20),
-        onTimeout: () => throw TimeoutException('启动流程超时'),
-      );
-    } on TimeoutException {
-      if (kDebugMode) {
-        debugPrint('SplashScreen: 启动流程超时，强制跳转');
-      }
-      if (!mounted) return;
-      _navigateByAuthState();
-    } catch (e, st) {
-      if (kDebugMode) {
-        debugPrint('SplashScreen _redirect error: $e\n$st');
-      }
-      if (!mounted) return;
-      _navigateByAuthState();
-    }
-  }
-
-  Future<void> _doRedirect() async {
-    final updateInfo = await checkPgyerUpdate();
-    if (mounted && updateInfo != null) {
-      final go = await showPgyerUpdateDialogWithInAppInstall(
-        context,
-        updateInfo,
-        openInAppForFallback: false,
-      );
-      if (!go && updateInfo.needForceUpdate) {
-        if (mounted) context.go('/login');
-        return;
-      }
-    }
-    if (!mounted) return;
+    // Supabase.initialize has already restored the persisted session. Network
+    // sync and updates continue on the destination page, never on the splash.
     final auth = context.read<AuthService>();
-    if (!auth.isLoggedIn) {
-      for (var i = 0; i < 3 && !auth.isLoggedIn; i++) {
-        try {
-          await auth.autoSignIn().timeout(const Duration(seconds: 10));
-        } catch (_) {}
-        if (!mounted) return;
-        if (auth.isLoggedIn) break;
-        await Future.delayed(const Duration(milliseconds: 500));
-      }
-    }
-    if (!mounted) return;
-    try {
-      await context.read<CoupleService>().refresh().timeout(const Duration(seconds: 10));
-    } catch (_) {}
-    if (!mounted) return;
-    final couple = context.read<CoupleService>();
-    if (auth.isLoggedIn) {
-      if (couple.isBound) {
-        context.go('/home');
-      } else {
-        context.go('/bind');
-      }
-    } else {
-      context.go('/login');
-    }
-  }
-
-  void _navigateByAuthState() {
-    if (!mounted) return;
-    try {
-      final auth = context.read<AuthService>();
-      if (auth.isLoggedIn) {
-        context.go('/home');
-      } else {
-        context.go('/login');
-      }
-    } catch (_) {
-      context.go('/login');
-    }
+    context.go(auth.isLoggedIn ? '/home/points' : '/login');
   }
 
   @override
