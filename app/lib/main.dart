@@ -35,7 +35,9 @@ void main() async {
     ]).catchError((Object error) {
       if (kDebugMode) debugPrint('Orientation unavailable: $error');
     }));
-    FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+    if (!kIsWeb) {
+      FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+    }
     runApp(Config.isSupabaseConfigured
         ? const _BootstrapApp()
         : const _ConfigErrorApp());

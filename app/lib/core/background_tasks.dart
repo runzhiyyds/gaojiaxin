@@ -7,6 +7,9 @@ import 'package:shorebird_code_push/shorebird_code_push.dart';
 
 /// Optional services must never delay first frame, login, or binding.
 void startBackgroundTasks(GoRouter router) {
+  // Web is for business/UI verification; Android updates and notifications
+  // require native plugins and must not run in the browser.
+  if (kIsWeb) return;
   unawaited(() async {
     try {
       await NotificationService.instance.init();

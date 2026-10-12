@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'dart:io';
+import 'package:flutter/foundation.dart';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -252,7 +252,8 @@ class _PgyerUpdateDialogWithInstallContentState
   Duration? _eta;
 
   void _onTapUpdate() {
-    final canInAppInstall = Platform.isAndroid &&
+    final canInAppInstall = !kIsWeb &&
+        defaultTargetPlatform == TargetPlatform.android &&
         widget.info.downloadUrl.trim().isNotEmpty &&
         Uri.tryParse(widget.info.downloadUrl) != null;
 

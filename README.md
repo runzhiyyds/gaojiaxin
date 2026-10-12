@@ -48,7 +48,7 @@ flutter pub get
 
 ```bash
 cd app
-flutter run
+./scripts/run_with_env.sh
 ```
 
 ### 5. 打 APK
@@ -89,6 +89,7 @@ flutter build apk --release --dart-define=SUPABASE_URL=xxx --dart-define=SUPABAS
 
 ## 文档
 
+- [本地验证与发版](docs/本地验证与发版.md)
 - [性能与体验优化记录](docs/性能与体验优化-2026-10-11.md)
 - [产品说明](docs/产品说明.md)
 - [UI 规范](docs/UI规范.md)
@@ -107,3 +108,10 @@ flutter build apk --release --dart-define=SUPABASE_URL=xxx --dart-define=SUPABAS
 ## 变更同步
 
 客户端变更统一同步到 [runzhiyyds/gaojiaxin](https://github.com/runzhiyyds/gaojiaxin)，具体协作约定见 [AGENTS.md](AGENTS.md)。
+
+## Web / 真机统一验证
+
+在项目根目录执行 `./test_app.sh`，自动优先选择已连接 Android 手机，否则使用 Chrome。
+执行 `./test_app.sh menu` 可在每轮退出后继续切换；`web`、`phone`、`profile`、`smoke`、`test` 可直接指定模式。
+
+发布命令保持 `./publish_new_version.sh 1.6.3 "全面优化"`；追加 `--check` 只检查，追加 `--build-only` 只构建。详见 [本地验证与发版](docs/本地验证与发版.md)。
