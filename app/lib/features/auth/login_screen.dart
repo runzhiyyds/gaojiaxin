@@ -87,6 +87,13 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                   ),
                   const SizedBox(height: 8),
+                  Text(
+                    '演示账号：123@163.com / 123456',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: AppTheme.secondary.withValues(alpha: 0.75),
+                          fontSize: 12,
+                        ),
+                  ),
                   const SizedBox(height: 32),
                   if (_error != null) ...[
                     Container(
