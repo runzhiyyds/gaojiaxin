@@ -90,6 +90,7 @@ flutter build apk --release --dart-define=SUPABASE_URL=xxx --dart-define=SUPABAS
 ## 文档
 
 - [本地验证与发版](docs/本地验证与发版.md)
+- [移动网络 TLS 故障诊断](docs/移动网络诊断-2026-10-13.md)
 - [性能与体验优化记录](docs/性能与体验优化-2026-10-11.md)
 - [产品说明](docs/产品说明.md)
 - [UI 规范](docs/UI规范.md)

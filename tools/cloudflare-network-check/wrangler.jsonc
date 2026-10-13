@@ -1,0 +1,7 @@
+{
+  "name": "gaojiaxin-network-check",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-13",
+  "workers_dev": true,
+  "observability": { "enabled": false }
+}
