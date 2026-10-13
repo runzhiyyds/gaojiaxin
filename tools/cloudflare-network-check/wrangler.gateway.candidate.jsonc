@@ -1,0 +1,13 @@
+// Requires the owner's approval to forward credentials before deployment.
+// Retain the existing domain binding when publishing the candidate version.
+{
+  "name": "gaojiaxin-network-check",
+  "main": "src/gateway.js",
+  "compatibility_date": "2026-10-13",
+  "workers_dev": true,
+  "routes": [
+    { "pattern": "gaojiaxin-check.pet-food-advisor.asia", "custom_domain": true }
+  ],
+  "vars": { "BUSINESS_GATEWAY_ENABLED": "true" },
+  "observability": { "enabled": false }
+}
