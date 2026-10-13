@@ -1,0 +1,11 @@
+{
+  "name": "爱情心意值",
+  "short_name": "爱情心意值",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#FDF6F8",
+  "theme_color": "#FDF6F8",
+  "description": "情侣心意记录与奖励兑换",
+  "orientation": "portrait-primary",
+  "prefer_related_applications": false
+}

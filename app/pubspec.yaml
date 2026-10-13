@@ -1,10 +1,9 @@
 name: love_story
 description: 爱情积分 - 与 TA 一起记录、兑换
 publish_to: 'none'
-version: 1.6.2+1775393862
-
+version: 1.6.4+1791867619
 environment:
-  sdk: '>=3.0.0 <4.0.0'
+  sdk: '>=3.4.0 <4.0.0'
 
 dependencies:
   flutter:
@@ -22,7 +21,7 @@ dependencies:
   fl_chart: ^0.66.0
   shorebird_code_push: ^2.0.5
   package_info_plus: ^8.0.0
-  http: ^1.2.0
+  http: ^1.6.0
   dio: ^5.4.0
   path_provider: ^2.1.2
   apk_sideload: ^0.0.2

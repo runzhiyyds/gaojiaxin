@@ -1,6 +1,7 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:love_story/core/cache/app_cache.dart';
-import 'package:love_story/core/connectivity_helper.dart';
+import 'package:love_story/core/load_feedback.dart';
 import 'package:love_story/core/theme.dart';
 import 'package:love_story/core/user_error.dart';
 import 'package:love_story/core/bind_prompt.dart';
@@ -36,6 +37,10 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
   int _myLocked = 0;
   int _taLocked = 0;
   bool _loading = true;
+  bool _hasData = false;
+  String? _loadError;
+  int _loadVersion = 0;
+  Timer? _realtimeDebounce;
   RealtimeChannel? _channel;
 
   int _recordTabIndex = 0;
@@ -54,7 +59,8 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
     if (spaceId != null) {
       _invalidateSpaceCaches(spaceId);
     }
-    return _load();
+    await context.read<CoupleService>().refresh();
+    if (mounted) await _load();
   }
 
   void _invalidateSpaceCaches(String spaceId) {
@@ -65,7 +71,10 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
 
   void _resetViewState({bool keepLoading = false}) {
     if (!mounted) return;
+    _loadVersion++;
     setState(() {
+      _hasData = false;
+      _loadError = null;
       _items = [];
       _records = [];
       _totalEarned = 0;
@@ -80,62 +89,63 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
 
   /// [silent] 为 true 时不显示 loading，用于 App 恢复时后台拉取最新数据，兼顾速度与实时性。
   Future<void> _load({bool silent = false}) async {
+    if (!mounted) return;
+    final version = ++_loadVersion;
+    final userId = context.read<AuthService>().currentUser?.id;
     final couple = context.read<CoupleService>();
     // 绑定信息仍在刷新时先占住 loading，避免切换账号后短暂显示空/0。
     if (couple.loading) {
-      if (mounted && !silent) setState(() => _loading = true);
+      if (mounted && !silent) setState(() => _loading = !_hasData);
+      return;
+    }
+    if (couple.error != null) {
+      setState(() {
+        _loading = false;
+        _loadError = couple.error;
+      });
       return;
     }
     final spaceId = couple.coupleSpaceId;
     final partnerId = couple.partnerId;
     if (spaceId == null) {
-      if (mounted) {
-        setState(() {
-          _items = [];
-          _records = [];
-          _totalEarned = 0;
-          _totalSpent = 0;
-          _myTotalEarned = 0;
-          _myTotalSpent = 0;
-          _myLocked = 0;
-          _taLocked = 0;
-          _loading = false;
-        });
-      }
+      _resetViewState();
       return;
     }
-    if (!silent) setState(() => _loading = true);
+    setState(() {
+      _loading = !_hasData;
+      _loadError = null;
+    });
     try {
       final repo = context.read<PointsRepository>();
       final mallRepo = context.read<MallRepository>();
       final historyStart = DateTime(2000, 1, 1);
       final historyEnd = DateTime(2100, 1, 1);
       final start = _filterDateRange?.start ?? historyStart;
-      final end = _filterDateRange?.end ?? historyEnd;
-      final itemsRaw = await repo.getItems(spaceId);
-      final records = await repo.getRecords(
-        coupleSpaceId: spaceId,
-        from: start,
-        to: end,
-        pointItemId: _filterPointItemId,
-        limit: 200,
-      );
-      final userId = context.read<AuthService>().currentUser?.id;
+      final selectedEnd = _filterDateRange?.end;
+      final end = selectedEnd == null ? historyEnd :
+          DateTime(selectedEnd.year, selectedEnd.month, selectedEnd.day + 1)
+              .subtract(const Duration(microseconds: 1));
       final depositsRepo = context.read<DepositsRepository>();
-      int taEarned = 0, taSpent = 0;
-      int myEarned = 0, mySpent = 0;
-      int myLocked = 0, taLocked = 0;
-      if (partnerId != null) {
-        taEarned = await repo.getTotalPointsEarned(spaceId, partnerId);
-        taSpent = await mallRepo.getTotalPointsSpent(spaceId, partnerId);
-        taLocked = await depositsRepo.getLockedPrincipal(spaceId, partnerId);
-      }
-      if (userId != null) {
-        myEarned = await repo.getTotalPointsEarned(spaceId, userId);
-        mySpent = await mallRepo.getTotalPointsSpent(spaceId, userId);
-        myLocked = await depositsRepo.getLockedPrincipal(spaceId, userId);
-      }
-      if (mounted) {
+      Future<List<int>> totals(String? id) => id == null
+          ? Future.value([0, 0, 0])
+          : Future.wait([
+              repo.getTotalPointsEarned(spaceId, id),
+              mallRepo.getTotalPointsSpent(spaceId, id),
+              depositsRepo.getLockedPrincipal(spaceId, id),
+            ], eagerError: true);
+      final results = await Future.wait<Object>([
+        repo.getItems(spaceId),
+        repo.getRecords(coupleSpaceId: spaceId, from: start, to: end,
+            pointItemId: _filterPointItemId, limit: 200),
+        totals(partnerId),
+        totals(userId),
+      ], eagerError: true);
+      if (!_isCurrentLoad(version, userId, spaceId)) return;
+      final itemsRaw = results[0] as List<PointItemModel>;
+      final records = results[1] as List<PointRecordModel>;
+      final ta = results[2] as List<int>;
+      final me = results[3] as List<int>;
+      {
         // 与记一笔一致，仅展示九种预设心意类型。
         const allowedNames = [
           '关心',
@@ -157,28 +167,34 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
         setState(() {
           _items = items;
           _records = records;
-          _totalEarned = taEarned;
-          _totalSpent = taSpent;
-          _myTotalEarned = myEarned;
-          _myTotalSpent = mySpent;
-          _myLocked = myLocked;
-          _taLocked = taLocked;
+          _totalEarned = ta[0];
+          _totalSpent = ta[1];
+          _myTotalEarned = me[0];
+          _myTotalSpent = me[1];
+          _myLocked = me[2];
+          _taLocked = ta[2];
           _loading = false;
+          _hasData = true;
         });
       }
     } catch (e) {
-      if (mounted) {
-        setState(() => _loading = false);
-        final msg = await isOffline()
-            ? '请检查网络'
-            : toUserMessage(e, context: '积分页加载');
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(msg)),
-          );
-        }
-      }
+      if (!_isCurrentLoad(version, userId, spaceId)) return;
+      setState(() {
+        _loading = false;
+        _loadError = toUserMessage(e, context: '心意页加载');
+      });
     }
+  }
+
+  bool _isCurrentLoad(int version, String? userId, String spaceId) => mounted &&
+      version == _loadVersion && context.read<AuthService>().currentUser?.id == userId &&
+      context.read<CoupleService>().coupleSpaceId == spaceId;
+
+  void _scheduleRealtimeReload() {
+    _realtimeDebounce?.cancel();
+    _realtimeDebounce = Timer(const Duration(milliseconds: 350), () {
+      if (mounted) _load(silent: true);
+    });
   }
 
   @override
@@ -186,9 +202,7 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _load();
-      _subscribeRealtime();
-      _showManualIfFirstTime();
+      if (mounted) _showManualIfFirstTime();
     });
   }
 
@@ -230,7 +244,13 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
         return;
       }
       if (currentCoupleLoading) {
-        _resetViewState(keepLoading: true);
+        if (userChanged || currentSpaceId != previousSpaceId) {
+          _resetViewState(keepLoading: true);
+        }
+        return;
+      }
+      if (couple.error != null) {
+        _load();
         return;
       }
       if (currentSpaceId == null) {
@@ -239,8 +259,10 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
         _resetViewState();
         return;
       }
-      _invalidateSpaceCaches(currentSpaceId);
-      _subscribeRealtime();
+      if (userChanged || previousSpaceId != currentSpaceId) {
+        _invalidateSpaceCaches(currentSpaceId);
+        _subscribeRealtime();
+      }
       // 换号/绑定完成后用可见 loading 重新拉，避免 silent 覆盖失败后仍显示旧空态。
       _load(silent: false);
     });
@@ -258,6 +280,8 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
 
   @override
   void dispose() {
+    _loadVersion++;
+    _realtimeDebounce?.cancel();
     _noteSearchController.dispose();
     WidgetsBinding.instance.removeObserver(this);
     _channel?.unsubscribe();
@@ -317,33 +341,49 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
           event: PostgresChangeEvent.all,
           schema: 'public',
           table: 'point_records',
+          filter: PostgresChangeFilter(type: PostgresChangeFilterType.eq,
+              column: 'couple_space_id', value: spaceId),
           callback: (payload) {
             if (!mounted) return;
             context.read<PointsRepository>().invalidateForSpace(spaceId);
             context.read<MallRepository>().invalidateForSpace(spaceId);
-            _load();
+            _scheduleRealtimeReload();
           },
         )
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
           schema: 'public',
           table: 'point_items',
+          filter: PostgresChangeFilter(type: PostgresChangeFilterType.eq,
+              column: 'couple_space_id', value: spaceId),
           callback: (payload) {
             if (!mounted) return;
             context.read<PointsRepository>().invalidateForSpace(spaceId);
             context.read<MallRepository>().invalidateForSpace(spaceId);
-            _load();
+            _scheduleRealtimeReload();
           },
         )
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
           schema: 'public',
           table: 'exchange_records',
+          filter: PostgresChangeFilter(type: PostgresChangeFilterType.eq,
+              column: 'couple_space_id', value: spaceId),
           callback: (payload) {
             if (!mounted) return;
             context.read<PointsRepository>().invalidateForSpace(spaceId);
             context.read<MallRepository>().invalidateForSpace(spaceId);
-            _load();
+            _scheduleRealtimeReload();
+          },
+        )
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all, schema: 'public', table: 'point_deposits',
+          filter: PostgresChangeFilter(type: PostgresChangeFilterType.eq,
+              column: 'couple_space_id', value: spaceId),
+          callback: (_) {
+            if (!mounted) return;
+            context.read<DepositsRepository>().invalidateForSpace(spaceId);
+            _scheduleRealtimeReload();
           },
         )
         .subscribe();
@@ -896,7 +936,9 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
         ),
         actions: const [],
       ),
-      body: _loading
+      body: _loadError != null && !_hasData
+          ? LoadFeedback(message: _loadError!, onRetry: _refresh)
+          : _loading
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
               onRefresh: _refresh,
@@ -906,7 +948,9 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    _buildPointsBalanceCard(context),
+                    if (_loadError != null)
+                      RefreshNotice(message: _loadError!, onRetry: _refresh),
+                    if (isLoggedIn && isBound) _buildPointsBalanceCard(context),
                     const SizedBox(height: 16),
                     if (isLoggedIn && !isBound)
                       Card(

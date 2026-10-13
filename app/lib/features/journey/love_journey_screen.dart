@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:love_story/core/theme.dart';
+import 'package:love_story/core/load_feedback.dart';
 import 'package:love_story/core/user_error.dart';
 import 'package:love_story/features/points/point_record_model.dart';
 import 'package:love_story/features/points/points_repository.dart';
@@ -19,74 +21,149 @@ class LoveJourneyScreen extends StatefulWidget {
   State<LoveJourneyScreen> createState() => _LoveJourneyScreenState();
 }
 
-class _LoveJourneyScreenState extends State<LoveJourneyScreen> {
+class _LoveJourneyScreenState extends State<LoveJourneyScreen> with WidgetsBindingObserver {
   List<PointRecordModel> _records = [];
   List<PointItemModel> _items = [];
   bool _loading = true;
   bool _loadingMore = false;
+  bool _hasData = false;
+  bool _hasMore = true;
+  int _nextOffset = 0;
+  int _loadVersion = 0;
+  String? _loadError;
+  Object? _lastIdentity;
+  bool? _lastBindingLoading;
+  Timer? _realtimeDebounce;
   DateTime? _rangeStart;
   DateTime? _rangeEnd;
   // 每次请求 20 条，默认展示从现在往前的最近 20 条；点击「加载更多」再向前翻。
   static const int _pageSize = 20;
   RealtimeChannel? _channel;
 
-  Future<void> _load({bool append = false}) async {
+  Future<void> _refresh() async {
+    if (!mounted) return;
     final spaceId = context.read<CoupleService>().coupleSpaceId;
-    if (spaceId == null) {
-      if (mounted) setState(() => _loading = false);
+    if (spaceId != null) context.read<PointsRepository>().invalidateForSpace(spaceId);
+    await context.read<CoupleService>().refresh();
+    if (mounted) await _load();
+  }
+
+  Future<void> _load({bool append = false}) async {
+    if (!mounted || (append && (_loadingMore || _loading || !_hasMore))) return;
+    final version = ++_loadVersion;
+    final couple = context.read<CoupleService>();
+    final userId = context.read<AuthService>().currentUser?.id;
+    final spaceId = couple.coupleSpaceId;
+    if (couple.loading) return;
+    if (couple.error != null) {
+      setState(() {
+        _loading = false;
+        _loadError = couple.error;
+      });
       return;
     }
-    if (!append) setState(() => _loading = true);
-    if (append) setState(() => _loadingMore = true);
+    if (spaceId == null || userId == null) {
+      setState(() {
+        _records = [];
+        _items = [];
+        _hasData = false;
+        _loading = false;
+        _loadingMore = false;
+      });
+      return;
+    }
+    setState(() {
+      _loading = !append && !_hasData;
+      _loadingMore = append;
+      _loadError = null;
+    });
+    bool isCurrent() => mounted && version == _loadVersion &&
+        context.read<AuthService>().currentUser?.id == userId &&
+        context.read<CoupleService>().coupleSpaceId == spaceId;
     try {
       final repo = context.read<PointsRepository>();
-      // 未选择时间范围时，不加 from/to 条件，默认按时间倒序拉取最近若干条（即「历史全部」但分页展示）。
-      DateTime? start;
-      DateTime? end;
-      if (_rangeStart != null || _rangeEnd != null) {
-        end = _rangeEnd ?? DateTime.now();
-        start = _rangeStart ?? DateTime(2000, 1, 1);
-      }
-      final list = await repo.getItemsIncludingDisabled(spaceId);
-      final records = await repo.getRecords(
-        coupleSpaceId: spaceId,
-        from: start,
-        to: end,
-        limit: append ? _records.length + _pageSize : _pageSize,
-      );
-      if (mounted) {
-        setState(() {
-          if (append) {
-            _records = records;
-          } else {
-            _records = records;
-            _items = list;
-          }
-          _loading = false;
-          _loadingMore = false;
-        });
-      }
-    } catch (_) {
-      if (mounted) {
-        setState(() {
-          _loading = false;
-          _loadingMore = false;
-        });
-      }
+      final selectedEnd = _rangeEnd;
+      final end = selectedEnd == null ? null :
+          DateTime(selectedEnd.year, selectedEnd.month, selectedEnd.day + 1)
+              .subtract(const Duration(microseconds: 1));
+      final offset = append ? _nextOffset : 0;
+      final results = await Future.wait<Object>([
+        append ? Future.value(_items) : repo.getItemsIncludingDisabled(spaceId),
+        repo.getRecords(coupleSpaceId: spaceId, from: _rangeStart, to: end,
+            limit: _pageSize, offset: offset),
+      ], eagerError: true);
+      if (!isCurrent()) return;
+      final records = results[1] as List<PointRecordModel>;
+      setState(() {
+        final knownIds = append ? _records.map((r) => r.id).toSet() : <String>{};
+        _records = [if (append) ..._records, ...records.where((r) => knownIds.add(r.id))];
+        _items = results[0] as List<PointItemModel>;
+        _nextOffset = offset + records.length;
+        _hasMore = records.length == _pageSize;
+        _hasData = true;
+        _loading = false;
+        _loadingMore = false;
+      });
+    } catch (error) {
+      if (!isCurrent()) return;
+      setState(() {
+        _loading = false;
+        _loadingMore = false;
+        _loadError = toUserMessage(error, context: '爱情旅程加载');
+      });
     }
   }
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final auth = context.watch<AuthService>();
+    final couple = context.watch<CoupleService>();
+    final identity = (auth.currentUser?.id, couple.coupleSpaceId, couple.partnerId);
+    final changed = identity != _lastIdentity;
+    if (!changed && _lastBindingLoading == couple.loading) return;
+    _lastIdentity = identity;
+    _lastBindingLoading = couple.loading;
+    if (changed) {
+      _loadVersion++;
+      _records = [];
+      _items = [];
+      _hasData = false;
+      _nextOffset = 0;
+      _hasMore = true;
+      _loadError = null;
+      _loading = couple.loading;
+      _loadingMore = false;
+      _channel?.unsubscribe();
+      _channel = null;
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || identity != _lastIdentity || couple.loading) return;
+      if (changed) _subscribeRealtime();
       _load();
-      _subscribeRealtime();
     });
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed || !mounted) return;
+    final spaceId = context.read<CoupleService>().coupleSpaceId;
+    if (spaceId == null) return;
+    context.read<PointsRepository>().invalidateForSpace(spaceId);
+    _load();
+  }
+
+  @override
   void dispose() {
+    _loadVersion++;
+    _realtimeDebounce?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     _channel?.unsubscribe();
     super.dispose();
   }
@@ -106,9 +183,15 @@ class _LoveJourneyScreenState extends State<LoveJourneyScreen> {
           event: PostgresChangeEvent.all,
           schema: 'public',
           table: 'point_records',
+          filter: PostgresChangeFilter(type: PostgresChangeFilterType.eq,
+              column: 'couple_space_id', value: spaceId),
           callback: (payload) {
             if (!mounted) return;
-            _load();
+            context.read<PointsRepository>().invalidateForSpace(spaceId);
+            _realtimeDebounce?.cancel();
+            _realtimeDebounce = Timer(const Duration(milliseconds: 350), () {
+              if (mounted) _load();
+            });
           },
         )
         .subscribe();
@@ -231,14 +314,18 @@ class _LoveJourneyScreenState extends State<LoveJourneyScreen> {
                 setState(() {
                   _rangeStart = range.start;
                   _rangeEnd = range.end;
-                  _load();
                 });
+                _load();
               }
             },
           ),
         ],
       ),
-      body: !hasPartner || userId == null || partnerId == null
+      body: _loadError != null && !_hasData
+          ? LoadFeedback(message: _loadError!, onRetry: _refresh)
+          : _loading && !_hasData
+              ? const Center(child: CircularProgressIndicator())
+          : !hasPartner || userId == null || partnerId == null
           ? Center(
               child: Padding(
                 padding: const EdgeInsets.all(24),
@@ -252,14 +339,16 @@ class _LoveJourneyScreenState extends State<LoveJourneyScreen> {
           : _loading
               ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
-                  onRefresh: () => _load(),
+                  onRefresh: _refresh,
                   child: _records.isEmpty
                       ? SingleChildScrollView(
                           physics: const AlwaysScrollableScrollPhysics(),
                           child: SizedBox(
                             height: MediaQuery.of(context).size.height * 0.5,
                             child: Center(
-                              child: Text(
+                              child: _loadError != null
+                                  ? LoadFeedback(message: _loadError!, onRetry: _refresh)
+                                  : Text(
                                 '暂无记录，去「心意」页为 TA 记一笔吧',
                                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: AppTheme.secondary),
                               ),
@@ -270,7 +359,10 @@ class _LoveJourneyScreenState extends State<LoveJourneyScreen> {
                           builder: (context) {
                             final display = _records.where((r) => !_isSystemRecord(r)).toList();
                             // 构建带有日期刻度的时间轴：日期分组标签 + 左右心意事件。
-                            final children = <Widget>[];
+                            final children = <Widget>[
+                              if (_loadError != null)
+                                RefreshNotice(message: _loadError!, onRetry: _refresh),
+                            ];
                             DateTime? lastDate;
                             for (final r in display) {
                               final dateOnly = DateTime(r.recordAt.year, r.recordAt.month, r.recordAt.day);
@@ -306,12 +398,12 @@ class _LoveJourneyScreenState extends State<LoveJourneyScreen> {
                                   child: _loadingMore
                                       ? const CircularProgressIndicator()
                                       : TextButton(
-                                          onPressed: _records.length >= _pageSize
+                                          onPressed: _hasMore
                                               ? () {
-                                                  setState(() => _load(append: true));
+                                                  _load(append: true);
                                                 }
                                               : null,
-                                          child: Text(_records.length >= _pageSize ? '加载更多' : '暂无更多'),
+                                          child: Text(_hasMore ? '加载更多' : '已加载全部记录'),
                                         ),
                                 ),
                               ),

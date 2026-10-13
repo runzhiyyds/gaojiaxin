@@ -15,6 +15,7 @@ abstract class IPointsRepository {
     DateTime? to,
     String? pointItemId,
     int limit = 50,
+    int offset = 0,
   });
   void invalidateForSpace(String coupleSpaceId);
 }
@@ -119,41 +120,39 @@ class PointsRepository implements IPointsRepository {
 
   Future<List<PointItemModel>> getItems(String coupleSpaceId) async {
     final key = '$_kItems$coupleSpaceId';
-    final cached = _cache.get<List<PointItemModel>>(key);
-    if (cached != null) return cached;
-    final res = await withSupabaseCall(
-      () => _client
-          .from('point_items')
-          .select()
-          .eq('couple_space_id', coupleSpaceId)
-          .eq('is_enabled', true)
-          .order('sort_order'),
-      isRead: true,
-    );
-    final list = (res as List)
-        .map((e) => PointItemModel.fromJson(Map<String, dynamic>.from(e as Map)))
-        .toList();
-    _cache.set(key, list);
-    return list;
+    return _cache.getOrLoad(key, () async {
+      final res = await withSupabaseCall(
+        () => _client
+            .from('point_items')
+            .select()
+            .eq('couple_space_id', coupleSpaceId)
+            .eq('is_enabled', true)
+            .order('sort_order'),
+        isRead: true,
+      );
+      final list = (res as List)
+          .map((e) => PointItemModel.fromJson(Map<String, dynamic>.from(e as Map)))
+          .toList();
+      return list;
+    });
   }
 
   Future<List<PointItemModel>> getItemsIncludingDisabled(String coupleSpaceId) async {
     final key = '$_kItemsAll$coupleSpaceId';
-    final cached = _cache.get<List<PointItemModel>>(key);
-    if (cached != null) return cached;
-    final res = await withSupabaseCall(
-      () => _client
-          .from('point_items')
-          .select()
-          .eq('couple_space_id', coupleSpaceId)
-          .order('sort_order'),
-      isRead: true,
-    );
-    final list = (res as List)
-        .map((e) => PointItemModel.fromJson(Map<String, dynamic>.from(e as Map)))
-        .toList();
-    _cache.set(key, list);
-    return list;
+    return _cache.getOrLoad(key, () async {
+      final res = await withSupabaseCall(
+        () => _client
+            .from('point_items')
+            .select()
+            .eq('couple_space_id', coupleSpaceId)
+            .order('sort_order'),
+        isRead: true,
+      );
+      final list = (res as List)
+          .map((e) => PointItemModel.fromJson(Map<String, dynamic>.from(e as Map)))
+          .toList();
+      return list;
+    });
   }
 
   Future<PointItemModel?> createItem({
@@ -349,57 +348,57 @@ class PointsRepository implements IPointsRepository {
     DateTime? to,
     String? pointItemId,
     int limit = 50,
+    int offset = 0,
   }) async {
     final fromStr = from?.toIso8601String() ?? 'n';
     final toStr = to?.toIso8601String() ?? 'n';
-    final key = '$_kRecords$coupleSpaceId:$fromStr:$toStr:${pointItemId ?? 'n'}:$limit';
-    final cached = _cache.get<List<PointRecordModel>>(key);
-    if (cached != null) return cached;
-    var queryBuilder = _client
-        .from('point_records')
-        .select()
-        .eq('couple_space_id', coupleSpaceId);
-    if (from != null) {
-      queryBuilder = queryBuilder.gte('record_at', from.toIso8601String());
-    }
-    if (to != null) {
-      queryBuilder = queryBuilder.lte('record_at', to.toIso8601String());
-    }
-    if (pointItemId != null) {
-      queryBuilder = queryBuilder.eq('point_item_id', pointItemId);
-    }
-    final res = await withSupabaseCall(
-      () => queryBuilder
-          .order('record_at', ascending: false)
-          .limit(limit),
-      isRead: true,
-    );
-    final list = (res as List)
-        .map((e) => PointRecordModel.fromJson(Map<String, dynamic>.from(e as Map)))
-        .toList();
-    _cache.set(key, list);
-    return list;
+    final key = '$_kRecords$coupleSpaceId:$fromStr:$toStr:${pointItemId ?? 'n'}:$limit:$offset';
+    return _cache.getOrLoad(key, () async {
+      var queryBuilder = _client
+          .from('point_records')
+          .select()
+          .eq('couple_space_id', coupleSpaceId);
+      if (from != null) {
+        queryBuilder = queryBuilder.gte('record_at', from.toIso8601String());
+      }
+      if (to != null) {
+        queryBuilder = queryBuilder.lte('record_at', to.toIso8601String());
+      }
+      if (pointItemId != null) {
+        queryBuilder = queryBuilder.eq('point_item_id', pointItemId);
+      }
+      final res = await withSupabaseCall(
+        () => queryBuilder
+            .order('record_at', ascending: false)
+            .order('id', ascending: false)
+            .range(offset, offset + limit - 1),
+        isRead: true,
+      );
+      final list = (res as List)
+          .map((e) => PointRecordModel.fromJson(Map<String, dynamic>.from(e as Map)))
+          .toList();
+      return list;
+    });
   }
 
   /// 爱情心意线：该用户累计获得心意值（只增不减）
   Future<int> getTotalPointsEarned(String coupleSpaceId, String userId) async {
     final key = '$_kEarned$coupleSpaceId:$userId';
-    final cached = _cache.get<int>(key);
-    if (cached != null) return cached;
-    final res = await withSupabaseCall(
-      () => _client
-          .from('point_records')
-          .select('points')
-          .eq('couple_space_id', coupleSpaceId)
-          .eq('user_id', userId),
-      isRead: true,
-    );
-    var sum = 0;
-    for (final row in res as List) {
-      sum += (row['points'] as num).toInt();
-    }
-    _cache.set(key, sum);
-    return sum;
+    return _cache.getOrLoad(key, () async {
+      final res = await withSupabaseCall(
+        () => _client
+            .from('point_records')
+            .select('points')
+            .eq('couple_space_id', coupleSpaceId)
+            .eq('user_id', userId),
+        isRead: true,
+      );
+      var sum = 0;
+      for (final row in res as List) {
+        sum += (row['points'] as num).toInt();
+      }
+      return sum;
+    });
   }
 
   /// 周期内总心意值（按用户汇总）
@@ -409,25 +408,24 @@ class PointsRepository implements IPointsRepository {
     required DateTime periodEnd,
   }) async {
     final key = '$_kCycleTotals$coupleSpaceId:${periodStart.toIso8601String()}:${periodEnd.toIso8601String()}';
-    final cached = _cache.get<Map<String, int>>(key);
-    if (cached != null) return cached;
-    final res = await withSupabaseCall(
-      () => _client
-          .from('point_records')
-          .select('user_id, points')
-          .eq('couple_space_id', coupleSpaceId)
-          .gte('record_at', periodStart.toIso8601String())
-          .lte('record_at', periodEnd.toIso8601String()),
-      isRead: true,
-    );
-    final map = <String, int>{};
-    for (final row in res as List) {
-      final uid = row['user_id'] as String;
-      final p = (row['points'] as num).toInt();
-      map[uid] = (map[uid] ?? 0) + p;
-    }
-    _cache.set(key, map);
-    return map;
+    return _cache.getOrLoad(key, () async {
+      final res = await withSupabaseCall(
+        () => _client
+            .from('point_records')
+            .select('user_id, points')
+            .eq('couple_space_id', coupleSpaceId)
+            .gte('record_at', periodStart.toIso8601String())
+            .lte('record_at', periodEnd.toIso8601String()),
+        isRead: true,
+      );
+      final map = <String, int>{};
+      for (final row in res as List) {
+        final uid = row['user_id'] as String;
+        final p = (row['points'] as num).toInt();
+        map[uid] = (map[uid] ?? 0) + p;
+      }
+      return map;
+    });
   }
 
   /// 一次性编辑一条心意记录：只允许在尚未使用编辑机会时调用。

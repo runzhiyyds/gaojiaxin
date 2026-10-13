@@ -10,7 +10,7 @@
 
 ## 环境要求
 
-- Flutter SDK >= 3.0（建议 3.16+）
+- Flutter：本次已验证 3.41.1 / Dart 3.11.0，Dart 依赖最低要求 3.4
 - 已配置 Android 开发环境（打 APK）
 - Supabase 项目（用于登录、绑定、积分与商城数据）
 
@@ -48,7 +48,7 @@ flutter pub get
 
 ```bash
 cd app
-flutter run
+./scripts/run_with_env.sh
 ```
 
 ### 5. 打 APK
@@ -80,7 +80,7 @@ flutter build apk --release --dart-define=SUPABASE_URL=xxx --dart-define=SUPABAS
    shorebird patch
    ```
 
-应用启动时会自动检查并下载可用更新（见 `lib/features/splash/splash_screen.dart`）。
+应用显示首屏后在后台检查和下载可用更新，不阻塞登录与首页（见 `app/lib/core/background_tasks.dart`）。
 
 ## 应用名称与图标
 
@@ -89,6 +89,9 @@ flutter build apk --release --dart-define=SUPABASE_URL=xxx --dart-define=SUPABAS
 
 ## 文档
 
+- [本地验证与发版](docs/本地验证与发版.md)
+- [移动网络 TLS 故障诊断](docs/移动网络诊断-2026-10-13.md)
+- [性能与体验优化记录](docs/性能与体验优化-2026-10-11.md)
 - [产品说明](docs/产品说明.md)
 - [UI 规范](docs/UI规范.md)
 - [Supabase 表结构](docs/supabase_schema.sql)
@@ -102,3 +105,16 @@ flutter build apk --release --dart-define=SUPABASE_URL=xxx --dart-define=SUPABAS
 ## 深色模式
 
 已支持系统跟随的深色模式（`ThemeMode.system`），无需额外配置。
+
+## 变更同步
+
+客户端变更统一同步到 [runzhiyyds/gaojiaxin](https://github.com/runzhiyyds/gaojiaxin)，具体协作约定见 [AGENTS.md](AGENTS.md)。
+
+## Web / 真机统一验证
+
+在项目根目录执行 `./test_app.sh`，自动优先选择已连接 Android 手机，否则使用 Chrome。
+执行 `./test_app.sh menu` 可在每轮退出后继续切换；`web`、`phone`、`profile`、`smoke`、`test` 可直接指定模式。
+
+本项目的移动网络业务入口已切换为 `https://gaojiaxin-check.pet-food-advisor.asia`，固定转发至原 Supabase 项目。本地配置需同时保留原会话键 `SUPABASE_AUTH_STORAGE_KEY=sb-uebeyflmmpesjolcrhnp-auth-token`；见 [业务接入与真机验证](docs/业务入口接入评审-2026-10-13.md)。入口升级不迁移数据库，蒲公英 `1.6.4` 已包含新地址。
+
+发布命令保持 `./publish_new_version.sh 1.6.3 "全面优化"`；追加 `--check` 只检查，追加 `--build-only` 只构建。详见 [本地验证与发版](docs/本地验证与发版.md)。
