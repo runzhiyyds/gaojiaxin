@@ -38,8 +38,30 @@ Future<void> main() async {
       if (target == null) await Future<void>.delayed(const Duration(milliseconds: 250));
     }
     if (target == null) throw StateError('Integration test extension did not start');
-    final result = await call('ext.flutter.driver',
-        {'isolateId': target, 'command': 'request_data'}, const Duration(minutes: 3));
+    // Libraries may spawn JSON/background isolates after the driver connects.
+    // --start-paused affects them too; resume startup pauses during the report.
+    var collecting = true;
+    final resumeWorkers = (() async {
+      while (collecting) {
+        final vm = await call('getVM');
+        for (final ref in vm['isolates'] as List) {
+          final id = ref['id'] as String;
+          final isolate = await call('getIsolate', {'isolateId': id});
+          if (isolate['pauseEvent']?['kind'] == 'PauseStart') {
+            await call('resume', {'isolateId': id});
+          }
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+      }
+    })();
+    late Map<String, dynamic> result;
+    try {
+      result = await call('ext.flutter.driver',
+          {'isolateId': target, 'command': 'request_data'}, const Duration(minutes: 3));
+    } finally {
+      collecting = false;
+      await resumeWorkers;
+    }
     final report = Response.fromJson(result['response']['message'] as String);
     if (!report.allTestsPassed) {
       stderr.writeln(report.formattedFailureDetails);
