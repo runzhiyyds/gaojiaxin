@@ -22,7 +22,7 @@ function error(status, message, code) {
   });
 }
 
-// Candidate only. The currently deployed Worker still uses index.js (read-only).
+// Fixed-project business gateway. index.js remains available for rollback.
 export function createGateway({ timeoutMs = 10000 } = {}) {
   return {
     async fetch(request, env = {}) {

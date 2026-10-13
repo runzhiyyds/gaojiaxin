@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:love_story/app.dart';
 import 'package:love_story/core/config.dart';
+import 'package:love_story/core/supabase_auth_options.dart';
 import 'package:love_story/router.dart';
 import 'package:love_story/features/auth/auth_service.dart';
 import 'package:love_story/features/couple/couple_service.dart';
@@ -73,6 +74,7 @@ class _BootstrapAppState extends State<_BootstrapApp> {
         url: Config.supabaseUrl,
         anonKey: Config.supabaseAnonKey,
         httpClient: SupabaseHttpClient(),
+        authOptions: supabaseAuthOptions(Config.supabaseAuthStorageKey),
       );
       final authService = AuthService();
       final router = createRouter(authService);

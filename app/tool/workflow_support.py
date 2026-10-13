@@ -26,6 +26,10 @@ def config(path):
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme != 'https' or not parsed.hostname or 'REPLACE_ME' in url:
         raise ValueError('请在 app/env.json 填写有效的 Supabase HTTPS 地址。')
+    storage_key = data.get('SUPABASE_AUTH_STORAGE_KEY', '')
+    if not isinstance(storage_key, str) or (storage_key and
+            not re.fullmatch(r'sb-[A-Za-z0-9_-]+-auth-token', storage_key)):
+        raise ValueError('会话存储键格式不正确，应保留原项目的 sb-项目引用-auth-token。')
     if not isinstance(key, str) or not key or 'REPLACE_ME' in key:
         raise ValueError('请在 app/env.json 填写 Supabase 客户端公开密钥。')
     if key.startswith('sb_secret_'):
@@ -188,7 +192,8 @@ def main():
         config(a[0]); print('客户端配置验证通过。')
     elif args.action == 'web-config':
         data = config(a[0])
-        Path(a[1]).write_text(json.dumps({k: data[k] for k in ('SUPABASE_URL', 'SUPABASE_ANON_KEY')}))
+        fields = ('SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_AUTH_STORAGE_KEY')
+        Path(a[1]).write_text(json.dumps({k: data[k] for k in fields if k in data}))
         os.chmod(a[1], 0o600)
     elif args.action == 'device':
         select_device(a[0], a[1], a[2] if len(a) > 2 else None)

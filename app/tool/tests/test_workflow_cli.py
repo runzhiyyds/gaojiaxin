@@ -79,6 +79,16 @@ if args[:1] == ['run']:
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(any(args[0] == 'run' for args in self.calls()))
 
+    def test_smoke_keeps_the_installed_app_and_local_data(self):
+        result = self.invoke('smoke')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        args = self.calls()[-1]
+        self.assertEqual(args[0], 'drive')
+        self.assertIn('--keep-app-running', args)
+        self.assertIn('--target=integration_test/app_test.dart', args)
+        self.assertIn('--driver=test_driver/integration_driver.dart', args)
+        self.assertEqual(args[args.index('-d') + 1], 'phone-id')
+
 
 if __name__ == '__main__':
     unittest.main()

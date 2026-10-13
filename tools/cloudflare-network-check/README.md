@@ -1,8 +1,8 @@
-# Cloudflare 只读连通性探针
+# Cloudflare 业务入口与连通性检测
 
-用于先验证手机移动数据能否通过一个独立入口连接 Supabase。只读版本已部署并在手机移动数据下验证；当前不能直接将 APP 的 SUPABASE_URL 改为这个探针地址，因为业务接口尚未启用。
+2026-10-13，用户明确授权升级为业务入口并接入 APP 真机验证后，`https://gaojiaxin-check.pet-food-advisor.asia` 已启用业务转发。APP 本地配置已经切换，仍使用原 Supabase 项目的客户端公开密钥与持久会话键。
 
-仅开放 `GET /health`，固定读取项目 `/auth/v1/health`；不接收或转发登录、数据库查询、API Key、Token 或密码。不需要配置 Supabase 服务端密钥。健康接口返回 401 是未携带密钥时的预期响应，只表示已收到 HTTP 响应。
+`GET /health` 继续固定读取原项目 `/auth/v1/health`，健康检测不转发客户端凭据；401 是未携带密钥时的预期健康响应。业务路径允许 Auth、REST/RPC、Storage、Realtime，固定原项目上游，转发客户端公开密钥、用户 JWT 与登录请求；没有服务端密钥或请求日志。鉴权与 RLS 仍由 Supabase 执行。
 
 本地验证（Node.js 18+）：
 
@@ -11,9 +11,9 @@ cd /Users/guochenyuan/Desktop/高佳欣/tools/cloudflare-network-check
 npm test
 ```
 
-只读版本有 5 项本地测试，业务候选版本有 12 项本地测试，合计 17 项通过；两个版本的 `wrangler@4.149.0 deploy --dry-run` 打包检查通过。dry-run 不上传或创建线上服务，不能替代真实账号回归。
+只读检测 5 项、业务入口 12 项本地测试，合计 17 项通过。手机移动数据下两个业务集成用例通过，覆盖旧会话、主要页面、密码登录、刷新、Realtime 订阅和重连。详细结果与限制见 [接入与验证记录](../../docs/业务入口接入评审-2026-10-13.md)。
 
-用户已完成 Cloudflare 授权，且明确批准新增检测子域名。当前 `wrangler.jsonc` 指向只读代码 `src/index.js`，只绑定已批准的完整主机名，不配置根域名或通配符。更新前后均需检查该主机名仍绑定同一个 Worker；本次首次绑定使用官方 Domains API 的 `zone_name` 参数，未修改现有网站记录。
+当前 `wrangler.jsonc` 指向业务代码 `src/gateway.js`，`wrangler.readonly.jsonc` 保留只读回退代码 `src/index.js`。只绑定已批准的完整主机名，不配置根域名或通配符。首次绑定使用 Domains API 的 `zone_name`；本次升级使用 Scripts API 上传打包模块，升级前后核对该主机名绑定一致，未修改 DNS/路由。
 
 Wrangler 授权需包含实际脚本管理权限（冒号与后缀需要完整保留）：
 
@@ -30,16 +30,16 @@ npx --yes wrangler@4.149.0 login --scopes 'account:read' 'user:read' 'workers_sc
 - `upstreamReached: true, upstreamStatus: 401`：两段连接均收到 HTTP 响应，可以继续准备业务网关与真实账号回归；这不代表已经验证登录或数据库查询。
 - 若 upstreamStatus 是 5xx 等其他状态，先排查上游响应；探针不把任意 HTTP 响应等同于业务正常。
 
-业务候选代码是 `src/gateway.js`，其配置 `wrangler.gateway.candidate.jsonc` 尚未部署。接入范围、凭据流向、客户端会话兼容和回退见 [业务入口接入评审](../../docs/业务入口接入评审-2026-10-13.md)。启用前必须取得超出“仅检测”范围的授权，再进行真实账号和业务回归。
+打包检查使用 `npx --yes wrangler@4.149.0 deploy --dry-run`；只读回退配置可追加 `--config wrangler.readonly.jsonc`。它们仅检查打包，不发布。当前 OAuth 可执行 Scripts API 上传，但 Wrangler 自动管理 custom domain 可能还需要区域读取权限；遇到区域查询失败应核对权限，不能扩大到根域名或修改其他产品记录。
 
 ## 实际部署与移动数据验证
 
-只读探针已部署到 `gaojiaxin-network-check.rzyydsnw918zgnb.workers.dev`。该默认域名在手机移动数据下解析到与 Cloudflare DoH 不一致的地址并连接失败，不能据此切换 APP 服务地址。
+最初部署的默认地址 `gaojiaxin-network-check.rzyydsnw918zgnb.workers.dev` 在手机移动数据下解析到与 Cloudflare DoH 不一致的地址并连接失败；APP 使用已验证的自有子域名。
 
 用户已有 `pet-food-advisor.asia`，其现有网站仍有其他产品使用。仅新增已批准的 `gaojiaxin-check.pet-food-advisor.asia`，绑定同一个只读探针，没有绑定根域名、现有网站主机名或通配符路由。绑定后的根域名 A 记录和名称服务器与操作前一致。
 
 2026-10-13，NOH AN01 默认网络 CELLULAR 下访问 [检测入口](https://gaojiaxin-check.pet-food-advisor.asia/health)：HTTP 200，约 1797 ms，返回 `gatewayReached: true, upstreamReached: true, upstreamStatus: 401`。电脑分别使用 Dart、curl 和浏览器请求标识也返回相同成功诊断；较早一次默认 Python 请求出现 403，原因未确定，因此不能推断所有请求环境都已验证。
 
-新子域名和现有域名注册共用，无需额外购买域名。本次未升级 Supabase 套餐、未改 APP 服务地址、未重新发布 APK；检测成功不等于已经修复 APP 登录。
+新子域名和现有域名注册共用，无需额外购买域名，也未升级 Supabase 套餐。业务授权后已切换本地 APP 并安装验证 Release 包；尚未替换蒲公英线上下载包。
 
-部署参考：[Cloudflare Wrangler 文档](https://developers.cloudflare.com/workers/wrangler/commands/)、[Workers Fetch API](https://developers.cloudflare.com/workers/runtime-apis/fetch/)。
+部署参考：[Cloudflare Wrangler 文档](https://developers.cloudflare.com/workers/wrangler/commands/)、[Workers Fetch API](https://developers.cloudflare.com/workers/runtime-apis/fetch/)、[模块上传 API](https://developers.cloudflare.com/api/resources/workers/subresources/scripts/methods/update/)。

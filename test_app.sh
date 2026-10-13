@@ -49,7 +49,10 @@ run_mode() {
   workflow_prepare || return
   case "${selected}" in
     smoke)
-      flutter test --no-pub integration_test/app_test.dart -d "${target}" --dart-define-from-file="${config_path}" ;;
+      # flutter test uninstalls the app at completion; keep the owner's data.
+      flutter drive --no-pub --driver=test_driver/integration_driver.dart \
+        --target=integration_test/app_test.dart --keep-app-running \
+        -d "${target}" --dart-define-from-file="${config_path}" ;;
     profile)
       echo "真机性能模式；退出运行按 q。"
       flutter run --no-pub --profile -d "${target}" --dart-define-from-file="${config_path}" ;;

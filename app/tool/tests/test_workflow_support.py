@@ -70,6 +70,20 @@ class WorkflowTests(unittest.TestCase):
             path = self.path / 'env.json'; path.write_text(json.dumps(data))
             with self.assertRaises(ValueError): workflow.config(path)
 
+    def test_gateway_web_config_preserves_session_key_without_private_fields(self):
+        source = self.path / 'env.json'; target = self.path / 'web.json'
+        data = public_config()
+        data['SUPABASE_AUTH_STORAGE_KEY'] = 'sb-original-project-auth-token'
+        source.write_text(json.dumps(data))
+        subprocess.run(['python3', str(HELPER), 'web-config', str(source), str(target)], check=True)
+        result = json.loads(target.read_text())
+        self.assertEqual(result['SUPABASE_AUTH_STORAGE_KEY'], data['SUPABASE_AUTH_STORAGE_KEY'])
+        self.assertNotIn('PGYER_API_KEY', result)
+        for invalid in [123, 'Bearer private-token']:
+            data['SUPABASE_AUTH_STORAGE_KEY'] = invalid
+            source.write_text(json.dumps(data))
+            with self.assertRaises(ValueError): workflow.config(source)
+
     def test_version_increases_build_number_and_rejects_shell_text(self):
         path = self.path / 'pubspec.yaml'
         path.write_text('name: test\nversion: 1.6.3+1900000000\n')
