@@ -40,6 +40,6 @@ npx --yes wrangler@4.149.0 login --scopes 'account:read' 'user:read' 'workers_sc
 
 2026-10-13，NOH AN01 默认网络 CELLULAR 下访问 [检测入口](https://gaojiaxin-check.pet-food-advisor.asia/health)：HTTP 200，约 1797 ms，返回 `gatewayReached: true, upstreamReached: true, upstreamStatus: 401`。电脑分别使用 Dart、curl 和浏览器请求标识也返回相同成功诊断；较早一次默认 Python 请求出现 403，原因未确定，因此不能推断所有请求环境都已验证。
 
-新子域名和现有域名注册共用，无需额外购买域名，也未升级 Supabase 套餐。业务授权后已切换本地 APP 并安装验证 Release 包；尚未替换蒲公英线上下载包。
+新子域名和现有域名注册共用，无需额外购买域名，也未升级 Supabase 套餐。业务授权后已切换 APP 并安装验证 Release 包；用户要求发布最新版后，已发布并核对蒲公英 `1.6.4+1791867619`。
 
 部署参考：[Cloudflare Wrangler 文档](https://developers.cloudflare.com/workers/wrangler/commands/)、[Workers Fetch API](https://developers.cloudflare.com/workers/runtime-apis/fetch/)、[模块上传 API](https://developers.cloudflare.com/api/resources/workers/subresources/scripts/methods/update/)。

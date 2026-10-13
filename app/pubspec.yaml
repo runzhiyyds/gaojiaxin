@@ -1,7 +1,7 @@
 name: love_story
 description: 爱情积分 - 与 TA 一起记录、兑换
 publish_to: 'none'
-version: 1.6.3+1791781195
+version: 1.6.4+1791867619
 environment:
   sdk: '>=3.4.0 <4.0.0'
 

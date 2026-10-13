@@ -115,6 +115,6 @@ flutter build apk --release --dart-define=SUPABASE_URL=xxx --dart-define=SUPABAS
 在项目根目录执行 `./test_app.sh`，自动优先选择已连接 Android 手机，否则使用 Chrome。
 执行 `./test_app.sh menu` 可在每轮退出后继续切换；`web`、`phone`、`profile`、`smoke`、`test` 可直接指定模式。
 
-本项目的移动网络业务入口已切换为 `https://gaojiaxin-check.pet-food-advisor.asia`，固定转发至原 Supabase 项目。本地配置需同时保留原会话键 `SUPABASE_AUTH_STORAGE_KEY=sb-uebeyflmmpesjolcrhnp-auth-token`；见 [业务接入与真机验证](docs/业务入口接入评审-2026-10-13.md)。入口升级不迁移数据库，蒲公英旧包需重新发布后才包含新地址。
+本项目的移动网络业务入口已切换为 `https://gaojiaxin-check.pet-food-advisor.asia`，固定转发至原 Supabase 项目。本地配置需同时保留原会话键 `SUPABASE_AUTH_STORAGE_KEY=sb-uebeyflmmpesjolcrhnp-auth-token`；见 [业务接入与真机验证](docs/业务入口接入评审-2026-10-13.md)。入口升级不迁移数据库，蒲公英 `1.6.4` 已包含新地址。
 
 发布命令保持 `./publish_new_version.sh 1.6.3 "全面优化"`；追加 `--check` 只检查，追加 `--build-only` 只构建。详见 [本地验证与发版](docs/本地验证与发版.md)。
