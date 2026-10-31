@@ -1,4 +1,5 @@
 import 'package:love_story/features/points/love_dimension.dart';
+
 class PointRecordModel {
   PointRecordModel({
     required this.id,
@@ -23,11 +24,14 @@ class PointRecordModel {
   final DateTime recordAt;
   final String? note;
   final DateTime createdAt;
+
   /// 非空表示已使用「一次编辑/删除」机会，不可再改
   final DateTime? editUsedAt;
   final LoveDimension? loveDimension;
+
   /// 收件人（user_id）对这条心意的回应正文
   final String? recipientComment;
+
   /// 收件人写下/更新回应的时间
   final DateTime? recipientCommentAt;
 
@@ -58,4 +62,19 @@ class PointRecordModel {
           : null,
     );
   }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'couple_space_id': coupleSpaceId,
+        'user_id': userId,
+        'point_item_id': pointItemId,
+        'points': points,
+        'record_at': recordAt.toUtc().toIso8601String(),
+        'note': note,
+        'created_at': createdAt.toUtc().toIso8601String(),
+        'edit_used_at': editUsedAt?.toUtc().toIso8601String(),
+        if (loveDimension != null) 'love_dimension': loveDimension!.dbValue,
+        'recipient_comment': recipientComment,
+        'recipient_comment_at': recipientCommentAt?.toUtc().toIso8601String(),
+      };
 }

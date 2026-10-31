@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:love_story/core/cache/app_cache.dart';
+import 'package:love_story/core/cache/persistent_snapshot_store.dart';
 import 'package:love_story/core/load_feedback.dart';
 import 'package:love_story/core/theme.dart';
 import 'package:love_story/core/user_error.dart';
@@ -38,8 +39,12 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
   int _taLocked = 0;
   bool _loading = true;
   bool _hasData = false;
+  bool _syncing = false;
+  bool _showingCachedSnapshot = false;
+  DateTime? _lastSyncedAt;
   String? _loadError;
   int _loadVersion = 0;
+  String? _snapshotIdentity;
   Timer? _realtimeDebounce;
   RealtimeChannel? _channel;
 
@@ -75,6 +80,10 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
     setState(() {
       _hasData = false;
       _loadError = null;
+      _syncing = false;
+      _showingCachedSnapshot = false;
+      _lastSyncedAt = null;
+      _snapshotIdentity = null;
       _items = [];
       _records = [];
       _totalEarned = 0;
@@ -95,12 +104,18 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
     final couple = context.read<CoupleService>();
     // 绑定信息仍在刷新时先占住 loading，避免切换账号后短暂显示空/0。
     if (couple.loading) {
-      if (mounted && !silent) setState(() => _loading = !_hasData);
+      if (mounted && !silent) {
+        setState(() {
+          _loading = !_hasData;
+          _syncing = _hasData;
+        });
+      }
       return;
     }
     if (couple.error != null) {
       setState(() {
         _loading = false;
+        _syncing = false;
         _loadError = couple.error;
       });
       return;
@@ -113,6 +128,7 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
     }
     setState(() {
       _loading = !_hasData;
+      _syncing = _hasData;
       _loadError = null;
     });
     try {
@@ -145,6 +161,7 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
       final records = results[1] as List<PointRecordModel>;
       final ta = results[2] as List<int>;
       final me = results[3] as List<int>;
+      final syncedAt = DateTime.now();
       {
         // 与记一笔一致，仅展示九种预设心意类型。
         const allowedNames = [
@@ -174,16 +191,73 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
           _myLocked = me[2];
           _taLocked = ta[2];
           _loading = false;
+          _syncing = false;
           _hasData = true;
+          _showingCachedSnapshot = false;
+          _lastSyncedAt = syncedAt;
         });
+        if (userId != null && _filterDateRange == null && _filterPointItemId == null) {
+          unawaited(PersistentSnapshotStore.instance.writePointsHome(PointsHomeSnapshot(
+            userId: userId,
+            spaceId: spaceId,
+            savedAt: syncedAt,
+            items: items,
+            records: records,
+            partnerTotalEarned: ta[0],
+            partnerTotalSpent: ta[1],
+            myTotalEarned: me[0],
+            myTotalSpent: me[1],
+            myLocked: me[2],
+            partnerLocked: ta[2],
+          )).catchError((Object _) {}));
+        }
       }
     } catch (e) {
       if (!_isCurrentLoad(version, userId, spaceId)) return;
       setState(() {
         _loading = false;
+        _syncing = false;
+        if (_hasData) _showingCachedSnapshot = true;
         _loadError = toUserMessage(e, context: '心意页加载');
       });
     }
+  }
+
+  Future<void> _restoreSnapshotThenLoad(String userId, String spaceId) async {
+    final identity = '$userId:$spaceId';
+    if (_snapshotIdentity == identity) return;
+    _snapshotIdentity = identity;
+    PointsHomeSnapshot? snapshot;
+    if (_filterDateRange == null && _filterPointItemId == null) {
+      try {
+        snapshot = await PersistentSnapshotStore.instance.readPointsHome(userId, spaceId);
+      } catch (_) {
+        // 本地快照不可用时，仍以网络数据为准。
+      }
+    }
+    if (!mounted || _snapshotIdentity != identity ||
+        context.read<AuthService>().currentUser?.id != userId ||
+        context.read<CoupleService>().coupleSpaceId != spaceId) {
+      return;
+    }
+    if (snapshot != null) {
+      final cached = snapshot;
+      setState(() {
+        _items = cached.items;
+        _records = cached.records;
+        _totalEarned = cached.partnerTotalEarned;
+        _totalSpent = cached.partnerTotalSpent;
+        _myTotalEarned = cached.myTotalEarned;
+        _myTotalSpent = cached.myTotalSpent;
+        _myLocked = cached.myLocked;
+        _taLocked = cached.partnerLocked;
+        _loading = false;
+        _hasData = true;
+        _showingCachedSnapshot = true;
+        _lastSyncedAt = cached.savedAt;
+      });
+    }
+    await _load(silent: snapshot != null);
   }
 
   bool _isCurrentLoad(int version, String? userId, String spaceId) => mounted &&
@@ -250,7 +324,11 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
         return;
       }
       if (couple.error != null) {
-        _load();
+        if (currentSpaceId != null) {
+          unawaited(_restoreSnapshotThenLoad(currentUserId, currentSpaceId));
+        } else {
+          _load();
+        }
         return;
       }
       if (currentSpaceId == null) {
@@ -262,6 +340,8 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
       if (userChanged || previousSpaceId != currentSpaceId) {
         _invalidateSpaceCaches(currentSpaceId);
         _subscribeRealtime();
+        unawaited(_restoreSnapshotThenLoad(currentUserId, currentSpaceId));
+        return;
       }
       // 换号/绑定完成后用可见 loading 重新拉，避免 silent 覆盖失败后仍显示旧空态。
       _load(silent: false);
@@ -633,6 +713,36 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
     );
   }
 
+  String _snapshotStatusText() {
+    if (_syncing) return '已先显示本地数据，正在同步最新内容…';
+    final syncedAt = _lastSyncedAt?.toLocal();
+    if (syncedAt == null) return '当前显示上次成功同步的数据';
+    final hour = syncedAt.hour.toString().padLeft(2, '0');
+    final minute = syncedAt.minute.toString().padLeft(2, '0');
+    return '当前显示 ${syncedAt.month}/${syncedAt.day} $hour:$minute 的本地数据';
+  }
+
+  Widget _buildSnapshotStatus(BuildContext context) => Container(
+    margin: const EdgeInsets.only(bottom: 12),
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+    decoration: BoxDecoration(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      borderRadius: BorderRadius.circular(10),
+    ),
+    child: Row(
+      children: [
+        Icon(_syncing ? Icons.sync : Icons.cloud_off_outlined,
+            size: 18, color: AppTheme.secondary),
+        const SizedBox(width: 8),
+        Expanded(child: Text(_snapshotStatusText(),
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: AppTheme.secondary,
+          ),
+        )),
+      ],
+    ),
+  );
+
   Widget _buildRecordFilters(BuildContext context) {
     return Card(
       child: Padding(
@@ -948,6 +1058,8 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    if (_hasData && (_syncing || _showingCachedSnapshot))
+                      _buildSnapshotStatus(context),
                     if (_loadError != null)
                       RefreshNotice(message: _loadError!, onRetry: _refresh),
                     if (isLoggedIn && isBound) _buildPointsBalanceCard(context),

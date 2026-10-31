@@ -3,10 +3,14 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:love_story/core/cache/app_cache.dart';
+import 'package:love_story/core/cache/persistent_snapshot_store.dart';
 
 class AuthService extends ChangeNotifier {
-  AuthService({GoTrueClient? client})
-      : _auth = client ?? Supabase.instance.client.auth {
+  AuthService({
+    GoTrueClient? client,
+    PersistentSnapshotStore? snapshotStore,
+  })  : _auth = client ?? Supabase.instance.client.auth,
+        _snapshotStore = snapshotStore ?? PersistentSnapshotStore.instance {
     _session = _auth.currentSession;
     _authSubscription = _auth.onAuthStateChange.listen((data) {
       // Password login is committed after its response has been validated.
@@ -15,6 +19,9 @@ class AuthService extends ChangeNotifier {
       _session = data.session;
       if (previousId != _session?.user.id) {
         AppCache.instance.clear();
+        if (previousId != null) {
+          unawaited(_clearSnapshot(previousId));
+        }
         notifyListeners();
       }
     }, onError: (Object error, StackTrace stack) {
@@ -24,6 +31,7 @@ class AuthService extends ChangeNotifier {
   }
 
   final GoTrueClient _auth;
+  final PersistentSnapshotStore _snapshotStore;
   late final StreamSubscription<AuthState> _authSubscription;
   Session? _session;
   bool _authenticating = false;
@@ -37,6 +45,14 @@ class AuthService extends ChangeNotifier {
   Session? get session => _session;
   User? get currentUser => _session?.user;
   bool get isLoggedIn => _session != null;
+
+  Future<void> _clearSnapshot(String userId) async {
+    try {
+      await _snapshotStore.clearUser(userId);
+    } catch (_) {
+      // Local cleanup failures must not break login or logout navigation.
+    }
+  }
 
   Future<void> signUp({
     required String email,
@@ -84,9 +100,11 @@ class AuthService extends ChangeNotifier {
   }
 
   Future<void> signOut() async {
+    final previousId = _session?.user.id;
     await _auth.signOut(scope: SignOutScope.local);
     _session = null;
     AppCache.instance.clear();
+    if (previousId != null) await _clearSnapshot(previousId);
     notifyListeners();
   }
 }

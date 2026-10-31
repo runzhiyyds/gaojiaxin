@@ -3,26 +3,31 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:love_story/core/cache/app_cache.dart';
+import 'package:love_story/core/cache/persistent_snapshot_store.dart';
 import 'package:love_story/core/user_error.dart';
 import 'package:love_story/core/notifications/device_registration.dart';
 
 class CoupleService extends ChangeNotifier {
-  CoupleService({SupabaseClient? client})
-      : _client = client ?? Supabase.instance.client {
+  CoupleService({
+    SupabaseClient? client,
+    PersistentSnapshotStore? snapshotStore,
+  })  : _client = client ?? Supabase.instance.client,
+        _snapshotStore = snapshotStore ?? PersistentSnapshotStore.instance {
     _authSubscription = _client.auth.onAuthStateChange.listen((_) {
       final userId = _client.auth.currentUser?.id;
       if (userId == _loadedUserId && _hasLoaded && _error == null) return;
-      unawaited(_loadBinding());
+      unawaited(_bootstrapBinding());
     }, onError: (Object error, StackTrace stack) {
       // Keep the binding during a transient background token-refresh failure.
     });
-    unawaited(_loadBinding());
+    unawaited(_bootstrapBinding());
   }
 
   static const _inviteCodeChars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   static const _inviteCodeLength = 6;
 
   final SupabaseClient _client;
+  final PersistentSnapshotStore _snapshotStore;
   late final StreamSubscription<AuthState> _authSubscription;
 
   String? _coupleSpaceId;
@@ -34,6 +39,8 @@ class CoupleService extends ChangeNotifier {
   String? _error;
   String? _loadedUserId;
   Future<void>? _bindingRequest;
+  Future<void>? _bootstrapRequest;
+  String? _bootstrapUserId;
   int _generation = 0;
   bool _hasLoaded = false;
   bool _disposed = false;
@@ -52,7 +59,54 @@ class CoupleService extends ChangeNotifier {
   String? get error => _error;
   bool get isBound => _coupleSpaceId != null && _coupleSpaceId!.isNotEmpty;
 
-  Future<void> _loadBinding({bool force = false}) {
+  Future<void> _bootstrapBinding() {
+    final userId = _client.auth.currentUser?.id;
+    final existing = _bootstrapRequest;
+    if (existing != null && userId == _bootstrapUserId) return existing;
+    _bootstrapUserId = userId;
+    final request = _performBootstrap(userId);
+    _bootstrapRequest = request;
+    unawaited(request.whenComplete(() {
+      if (identical(_bootstrapRequest, request)) {
+        _bootstrapRequest = null;
+        _bootstrapUserId = null;
+      }
+    }));
+    return request;
+  }
+
+  Future<void> _performBootstrap(String? userId) async {
+    if (userId == null) {
+      await _loadBinding(force: true);
+      return;
+    }
+    CoupleBindingSnapshot? snapshot;
+    try {
+      snapshot = await _snapshotStore.readCoupleBinding(userId);
+    } catch (_) {
+      // A local cache failure must never block the authoritative network read.
+    }
+    if (_disposed || _client.auth.currentUser?.id != userId) return;
+    if (snapshot != null) {
+      if (_loadedUserId != userId) AppCache.instance.clear();
+      _loadedUserId = userId;
+      _myProfile = snapshot.profile;
+      _coupleSpaceId = snapshot.spaceId;
+      _inviteCode = snapshot.inviteCode;
+      _partnerId = snapshot.partnerId;
+      _partnerProfile = snapshot.partner;
+      _hasLoaded = true;
+      _loading = false;
+      _error = null;
+      notifyListeners();
+    }
+    await _loadBinding(force: true, keepVisible: snapshot != null);
+  }
+
+  Future<void> _loadBinding({
+    bool force = false,
+    bool keepVisible = false,
+  }) {
     final userId = _client.auth.currentUser?.id;
     if (!force && _bindingRequest != null && userId == _loadedUserId) {
       return _bindingRequest!;
@@ -68,7 +122,7 @@ class CoupleService extends ChangeNotifier {
       _hasLoaded = false;
     }
     _loadedUserId = userId;
-    _loading = userId != null;
+    _loading = userId != null && !(keepVisible && _hasLoaded);
     _error = null;
     notifyListeners();
     if (userId == null) {
@@ -99,6 +153,17 @@ class CoupleService extends ChangeNotifier {
       _partnerId = binding.partnerId;
       _partnerProfile = binding.partner;
       _hasLoaded = true;
+      unawaited(_snapshotStore
+          .writeCoupleBinding(CoupleBindingSnapshot(
+            userId: userId,
+            savedAt: DateTime.now(),
+            profile: binding.profile,
+            spaceId: binding.spaceId,
+            inviteCode: binding.inviteCode,
+            partnerId: binding.partnerId,
+            partner: binding.partner,
+          ))
+          .catchError((Object _) {}));
       _registerDeviceInBackground();
     } catch (error) {
       if (!_isCurrent(userId, generation)) return;
@@ -194,7 +259,13 @@ class CoupleService extends ChangeNotifier {
     }());
   }
 
-  Future<void> refresh() => _loadBinding();
+  Future<void> refresh() {
+    final bootstrap = _bootstrapRequest;
+    if (bootstrap != null && _bootstrapUserId == _client.auth.currentUser?.id) {
+      return bootstrap;
+    }
+    return _loadBinding(force: true, keepVisible: _hasLoaded);
+  }
 
   String _generateInviteCode() {
     final r = Random();

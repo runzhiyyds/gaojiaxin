@@ -3,7 +3,9 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:love_story/core/cache/persistent_snapshot_store.dart';
 import 'package:love_story/features/couple/couple_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 Map<String, Object?> _session(String id) => {
@@ -31,6 +33,10 @@ http.Response _profile(http.Request request, String user, String? space) =>
         headers: {'content-type': 'application/json'});
 
 void main() {
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+  });
+
   test('constructor, auth event and concurrent refresh share one profile read',
       () async {
     var reads = 0;
@@ -99,6 +105,67 @@ void main() {
     await service.refresh();
     expect(service.error, isNull);
     expect(service.myProfile?['id'], 'user-a');
+    service.dispose();
+    await client.dispose();
+  });
+
+  test('cached binding is visible while the network refresh is pending',
+      () async {
+    final store = PersistentSnapshotStore();
+    await store.writeCoupleBinding(CoupleBindingSnapshot(
+      userId: 'user-a',
+      savedAt: DateTime.utc(2026, 10, 31),
+      profile: {'id': 'user-a', 'nickname': 'A'},
+      spaceId: 'space-a',
+      inviteCode: null,
+      partnerId: 'user-b',
+      partner: {'id': 'user-b', 'nickname': 'B'},
+    ));
+    final network = Completer<void>();
+    final client = SupabaseClient('https://example.test', 'anon',
+        authOptions: const AuthClientOptions(autoRefreshToken: false),
+        httpClient: MockClient((request) async {
+      await network.future;
+      return _profile(request, 'user-a', 'space-a');
+    }));
+    await client.auth.setInitialSession(jsonEncode(_session('user-a')));
+
+    final service = CoupleService(client: client, snapshotStore: store);
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+
+    expect(service.loading, isFalse);
+    expect(service.coupleSpaceId, 'space-a');
+    expect(service.partnerId, 'user-b');
+    network.complete();
+    service.dispose();
+    await client.dispose();
+  });
+
+  test('cached binding remains visible when background refresh fails',
+      () async {
+    final store = PersistentSnapshotStore();
+    await store.writeCoupleBinding(CoupleBindingSnapshot(
+      userId: 'user-a',
+      savedAt: DateTime.utc(2026, 10, 31),
+      profile: {'id': 'user-a', 'nickname': 'A'},
+      spaceId: 'space-a',
+      inviteCode: null,
+      partnerId: 'user-b',
+      partner: {'id': 'user-b', 'nickname': 'B'},
+    ));
+    final client = SupabaseClient('https://example.test', 'anon',
+        authOptions: const AuthClientOptions(autoRefreshToken: false),
+        httpClient: MockClient((_) async => throw http.ClientException(
+            'SocketException: Connection timed out')));
+    await client.auth.setInitialSession(jsonEncode(_session('user-a')));
+
+    final service = CoupleService(client: client, snapshotStore: store);
+    await service.refresh();
+
+    expect(service.loading, isFalse);
+    expect(service.coupleSpaceId, 'space-a');
+    expect(service.partnerId, 'user-b');
+    expect(service.error, contains('连接服务超时'));
     service.dispose();
     await client.dispose();
   });
