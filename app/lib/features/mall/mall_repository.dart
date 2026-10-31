@@ -213,34 +213,19 @@ class MallRepository {
   /// 兑换：校验兑换余额与库存后写入兑换记录并扣减库存。
   Future<void> exchange({
     required String coupleSpaceId,
-    required String userId,
     required String mallGoodId,
-    required int pointsRequired,
-    required int userBalance,
+    required String requestId,
   }) async {
-    if (userBalance < pointsRequired) {
-      throw Exception('兑换余额不足，当前余额：$userBalance');
-    }
-    final good = await getGood(mallGoodId);
-    if (good == null) throw Exception('商品不存在');
-    if (!good.isUnlimited && (good.stock ?? 0) < 1) {
-      throw Exception('库存不足');
-    }
-    await _client.from('exchange_records').insert({
-      'couple_space_id': coupleSpaceId,
-      'user_id': userId,
-      'mall_good_id': mallGoodId,
-      'points_spent': pointsRequired,
-    });
-    if (!good.isUnlimited) {
-      await _client
-          .from('mall_goods')
-          .update({
-            'stock': (good.stock! - 1),
-            'updated_at': DateTime.now().toIso8601String(),
-          })
-          .eq('id', mallGoodId);
-    }
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) throw Exception('请先登录');
+    await withSupabaseCall(
+      () => _client.rpc('exchange_good_atomic', params: {
+        'p_couple_space_id': coupleSpaceId,
+        'p_mall_good_id': mallGoodId,
+        'p_request_id': requestId,
+      }),
+      isRead: false,
+    );
     _cache.remove('$_kGood$mallGoodId');
     _cache.remove('$_kGoods$coupleSpaceId');
     _cache.removeByPrefix('$_kGoodsOwner$coupleSpaceId:');

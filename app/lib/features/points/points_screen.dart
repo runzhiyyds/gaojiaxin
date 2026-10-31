@@ -149,18 +149,30 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
               mallRepo.getTotalPointsSpent(spaceId, id),
               depositsRepo.getLockedPrincipal(spaceId, id),
             ], eagerError: true);
-      final results = await Future.wait<Object>([
-        repo.getItems(spaceId),
-        repo.getRecords(coupleSpaceId: spaceId, from: start, to: end,
-            pointItemId: _filterPointItemId, limit: 200),
-        totals(partnerId),
-        totals(userId),
-      ], eagerError: true);
+      final useHomeRpc = _filterDateRange == null && _filterPointItemId == null;
+      final results = useHomeRpc
+          ? <Object>[await repo.getHomeSnapshot(spaceId)]
+          : await Future.wait<Object>([
+              repo.getItems(spaceId),
+              repo.getRecords(coupleSpaceId: spaceId, from: start, to: end,
+                  pointItemId: _filterPointItemId, limit: 200),
+              totals(partnerId),
+              totals(userId),
+            ], eagerError: true);
       if (!_isCurrentLoad(version, userId, spaceId)) return;
-      final itemsRaw = results[0] as List<PointItemModel>;
-      final records = results[1] as List<PointRecordModel>;
-      final ta = results[2] as List<int>;
-      final me = results[3] as List<int>;
+      final home = useHomeRpc ? results[0] as PointsHomeData : null;
+      if (home != null &&
+          (home.currentUserId != userId || home.coupleSpaceId != spaceId)) {
+        throw StateError('首页数据所属账号或情侣空间已变化');
+      }
+      final itemsRaw = home?.items ?? results[0] as List<PointItemModel>;
+      final records = home?.records ?? results[1] as List<PointRecordModel>;
+      final ta = home == null
+          ? results[2] as List<int>
+          : [home.partnerTotalEarned, home.partnerTotalSpent, home.partnerLocked];
+      final me = home == null
+          ? results[3] as List<int>
+          : [home.myTotalEarned, home.myTotalSpent, home.myLocked];
       final syncedAt = DateTime.now();
       {
         // 与记一笔一致，仅展示九种预设心意类型。
@@ -574,6 +586,7 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
                       await context.read<PointsRepository>().setRecipientComment(
                             recordId: r.id,
                             coupleSpaceId: r.coupleSpaceId,
+                            expectedVersion: r.rowVersion,
                             comment: text,
                           );
                       if (!context.mounted) return;
@@ -1004,6 +1017,7 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
                             await context.read<PointsRepository>().deleteRecord(
                                   recordId: r.id,
                                   coupleSpaceId: r.coupleSpaceId,
+                                  expectedVersion: r.rowVersion,
                                 );
                             if (!mounted) return;
                             ScaffoldMessenger.of(context).showSnackBar(

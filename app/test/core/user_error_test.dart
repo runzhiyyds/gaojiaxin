@@ -101,6 +101,13 @@ void main() {
           '商品不存在或已下架。',
         );
       });
+
+      test('旧版本写入冲突', () {
+        expect(
+          toUserMessage(Exception('记录已变化，请刷新后重试')),
+          '这条记录已被更新，请刷新后再操作。',
+        );
+      });
     });
 
     test('auth-wrapped socket timeout is actionable without exposing internals', () {

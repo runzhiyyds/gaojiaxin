@@ -255,6 +255,7 @@ class _LoveJourneyScreenState extends State<LoveJourneyScreen> with WidgetsBindi
                       await context.read<PointsRepository>().setRecipientComment(
                             recordId: r.id,
                             coupleSpaceId: r.coupleSpaceId,
+                            expectedVersion: r.rowVersion,
                             comment: text,
                           );
                       if (!mounted || !ctx.mounted) return;

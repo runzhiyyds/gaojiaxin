@@ -10,6 +10,7 @@ import 'package:love_story/features/mall/mall_repository.dart';
 import 'package:love_story/features/points/points_repository.dart';
 import 'package:love_story/features/points/random_bonus_util.dart';
 import 'package:provider/provider.dart';
+import 'package:uuid/uuid.dart';
 
 /// 心意存储：活期说明 + 定期产品存入 + 我的定期列表（到期/提前支取）
 class DepositsScreen extends StatefulWidget {
@@ -24,6 +25,8 @@ class _DepositsScreenState extends State<DepositsScreen> {
   List<PointDepositModel> _deposits = [];
   DepositProductType? _defaultProduct;
   bool _loading = true;
+  String? _pendingDepositRequestId;
+  String? _pendingDepositFingerprint;
 
   /// 预计利息（与后端 redeemAtMaturity 一致：本金 × 期限利率，取整）
   static int _interestFor(int principal, double rate) {
@@ -42,11 +45,18 @@ class _DepositsScreenState extends State<DepositsScreen> {
       final pointsRepo = context.read<PointsRepository>();
       final mallRepo = context.read<MallRepository>();
       final depositsRepo = context.read<DepositsRepository>();
-      final earned = await pointsRepo.getTotalPointsEarned(spaceId, userId);
-      final spent = await mallRepo.getTotalPointsSpent(spaceId, userId);
-      final locked = await depositsRepo.getLockedPrincipal(spaceId, userId);
-      final list = await depositsRepo.getDeposits(spaceId, userId);
-      final defaultProduct = await depositsRepo.getDefaultDepositProduct(spaceId, userId);
+      final results = await Future.wait<Object?>([
+        pointsRepo.getTotalPointsEarned(spaceId, userId),
+        mallRepo.getTotalPointsSpent(spaceId, userId),
+        depositsRepo.getLockedPrincipal(spaceId, userId),
+        depositsRepo.getDeposits(spaceId, userId),
+        depositsRepo.getDefaultDepositProduct(spaceId, userId),
+      ]);
+      final earned = results[0] as int;
+      final spent = results[1] as int;
+      final locked = results[2] as int;
+      final list = results[3] as List<PointDepositModel>;
+      final defaultProduct = results[4] as DepositProductType?;
       if (mounted) {
         setState(() {
           _availableBalance = earned - spent - locked;
@@ -158,12 +168,19 @@ class _DepositsScreenState extends State<DepositsScreen> {
     final principal = ((double.tryParse(c.text.replaceAll(' ', '')) ?? 0) * 10).round();
     if (principal < 10 || principal > _availableBalance) return;
     try {
+      final fingerprint = '${product.value}:$principal';
+      if (_pendingDepositFingerprint != fingerprint) {
+        _pendingDepositFingerprint = fingerprint;
+        _pendingDepositRequestId = const Uuid().v4();
+      }
       await context.read<DepositsRepository>().createDeposit(
         coupleSpaceId: spaceId,
-        userId: userId,
         productType: product,
         principal: principal,
+        requestId: _pendingDepositRequestId!,
       );
+      _pendingDepositRequestId = null;
+      _pendingDepositFingerprint = null;
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('存入成功')));
         _load();

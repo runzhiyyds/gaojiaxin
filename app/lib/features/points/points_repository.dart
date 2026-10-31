@@ -6,6 +6,55 @@ import 'package:love_story/features/points/random_bonus_util.dart';
 import 'package:love_story/features/points/love_dimension.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+class PointsHomeData {
+  const PointsHomeData({
+    required this.coupleSpaceId,
+    required this.currentUserId,
+    required this.partnerUserId,
+    required this.items,
+    required this.records,
+    required this.myTotalEarned,
+    required this.partnerTotalEarned,
+    required this.myTotalSpent,
+    required this.partnerTotalSpent,
+    required this.myLocked,
+    required this.partnerLocked,
+  });
+
+  final String coupleSpaceId;
+  final String currentUserId;
+  final String? partnerUserId;
+  final List<PointItemModel> items;
+  final List<PointRecordModel> records;
+  final int myTotalEarned;
+  final int partnerTotalEarned;
+  final int myTotalSpent;
+  final int partnerTotalSpent;
+  final int myLocked;
+  final int partnerLocked;
+
+  factory PointsHomeData.fromJson(Map<String, dynamic> json) {
+    int intValue(String key) => (json[key] as num?)?.toInt() ?? 0;
+    return PointsHomeData(
+      coupleSpaceId: json['couple_space_id'] as String,
+      currentUserId: json['current_user_id'] as String,
+      partnerUserId: json['partner_user_id'] as String?,
+      items: ((json['items'] as List?) ?? const [])
+          .map((row) => PointItemModel.fromJson(Map<String, dynamic>.from(row as Map)))
+          .toList(),
+      records: ((json['records'] as List?) ?? const [])
+          .map((row) => PointRecordModel.fromJson(Map<String, dynamic>.from(row as Map)))
+          .toList(),
+      myTotalEarned: intValue('my_total_earned'),
+      partnerTotalEarned: intValue('partner_total_earned'),
+      myTotalSpent: intValue('my_total_spent'),
+      partnerTotalSpent: intValue('partner_total_spent'),
+      myLocked: intValue('my_locked'),
+      partnerLocked: intValue('partner_locked'),
+    );
+  }
+}
+
 /// 心意值数据源抽象，便于单测 Mock 与后续换数据源。
 abstract class IPointsRepository {
   Future<List<PointItemModel>> getItems(String coupleSpaceId);
@@ -39,6 +88,18 @@ class PointsRepository implements IPointsRepository {
   static const randomBonusItemName = '随机奖励';
   /// 系统心意项名称，用于存储到期利息入账
   static const interestItemName = '利息';
+
+  /// 首页默认态一次读取项目、最近记录和双方余额统计。
+  Future<PointsHomeData> getHomeSnapshot(String coupleSpaceId) async {
+    final response = await withSupabaseCall(
+      () => _client.rpc('get_points_home_snapshot', params: {
+        'p_couple_space_id': coupleSpaceId,
+        'p_record_limit': 200,
+      }),
+      isRead: true,
+    );
+    return PointsHomeData.fromJson(Map<String, dynamic>.from(response as Map));
+  }
 
   void _invalidatePoints(String coupleSpaceId) {
     _cache.remove('$_kItems$coupleSpaceId');
@@ -433,44 +494,19 @@ class PointsRepository implements IPointsRepository {
   Future<void> updateRecord({
     required String recordId,
     required String coupleSpaceId,
-    required int points,
+    required int expectedVersion,
     String? note,
     required String pointItemId,
   }) async {
-    final now = DateTime.now().toIso8601String();
-    final updateMap = <String, dynamic>{
-      'points': points,
-      'point_item_id': pointItemId,
-      'edit_used_at': now,
-    };
-    if (note != null) {
-      if (note.isEmpty) {
-        updateMap['note'] = null;
-      } else {
-        updateMap['note'] = note;
-      }
-    }
-
-    final res = await withSupabaseCall(
-      () => _client
-          .from('point_records')
-          .update(updateMap)
-          .eq('id', recordId)
-          .filter('edit_used_at', 'is', null)
-          .select()
-          .maybeSingle(),
+    await withSupabaseCall(
+      () => _client.rpc('update_point_record_once_if_version', params: {
+        'p_record_id': recordId,
+        'p_expected_version': expectedVersion,
+        'p_point_item_id': pointItemId,
+        'p_note': note ?? '',
+      }),
       isRead: false,
     );
-
-    if (res == null) {
-      throw PostgrestException(
-        message: '编辑机会已被使用，无法再次修改这条记录',
-        details: null,
-        hint: null,
-        code: 'edit_used',
-      );
-    }
-
     _invalidatePoints(coupleSpaceId);
   }
 
@@ -479,12 +515,13 @@ class PointsRepository implements IPointsRepository {
   Future<void> deleteRecord({
     required String recordId,
     required String coupleSpaceId,
+    required int expectedVersion,
   }) async {
     await withSupabaseCall(
-      () => _client
-          .from('point_records')
-          .delete()
-          .eq('id', recordId),
+      () => _client.rpc('delete_point_record_if_version', params: {
+        'p_record_id': recordId,
+        'p_expected_version': expectedVersion,
+      }),
       isRead: false,
     );
     _invalidatePoints(coupleSpaceId);
@@ -494,13 +531,15 @@ class PointsRepository implements IPointsRepository {
   Future<void> setRecipientComment({
     required String recordId,
     required String coupleSpaceId,
+    required int expectedVersion,
     String? comment,
   }) async {
     await withSupabaseCall(
       () => _client.rpc(
-            'set_point_record_recipient_comment',
+            'set_point_record_comment_if_version',
             params: {
               'p_record_id': recordId,
+              'p_expected_version': expectedVersion,
               'p_comment': comment?.trim() ?? '',
             },
           ),

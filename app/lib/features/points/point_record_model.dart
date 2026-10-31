@@ -14,6 +14,7 @@ class PointRecordModel {
     this.editUsedAt,
     this.recipientComment,
     this.recipientCommentAt,
+    this.rowVersion = 1,
   }) : createdAt = createdAt ?? DateTime.now();
 
   final String id;
@@ -34,6 +35,9 @@ class PointRecordModel {
 
   /// 收件人写下/更新回应的时间
   final DateTime? recipientCommentAt;
+
+  /// 服务端并发版本；写入时必须与最新行一致，避免旧快照覆盖新数据。
+  final int rowVersion;
 
   bool get canEditOnce => editUsedAt == null;
 
@@ -60,6 +64,7 @@ class PointRecordModel {
       recipientCommentAt: json['recipient_comment_at'] != null
           ? DateTime.parse(json['recipient_comment_at'] as String)
           : null,
+      rowVersion: (json['row_version'] as num?)?.toInt() ?? 1,
     );
   }
 
@@ -76,5 +81,6 @@ class PointRecordModel {
         if (loveDimension != null) 'love_dimension': loveDimension!.dbValue,
         'recipient_comment': recipientComment,
         'recipient_comment_at': recipientCommentAt?.toUtc().toIso8601String(),
+        'row_version': rowVersion,
       };
 }

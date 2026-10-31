@@ -85,14 +85,12 @@ class _RecordEditScreenState extends State<RecordEditScreen> {
       );
       return;
     }
-    // 历史记录的心意值不可编辑，始终沿用原始数值，仅允许调整项目与备注。
-    final points = widget.record.points;
     setState(() => _saving = true);
     try {
       await context.read<PointsRepository>().updateRecord(
             recordId: widget.record.id,
             coupleSpaceId: widget.record.coupleSpaceId,
-            points: points,
+            expectedVersion: widget.record.rowVersion,
             note: _noteController.text.trim().isEmpty
                 ? null
                 : _noteController.text.trim(),

@@ -63,6 +63,7 @@ String toUserMessage(Object e, {String? context}) {
   if (s.contains('兑换余额不足')) return '兑换余额不足，请先积累心意值后再兑换。';
   if (s.contains('库存不足')) return '库存不足，无法兑换。';
   if (s.contains('商品不存在')) return '商品不存在或已下架。';
+  if (s.contains('记录已变化')) return '这条记录已被更新，请刷新后再操作。';
   return '操作失败，请稍后重试。';
 }
 
