@@ -1,10 +1,25 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createGateway } from '../src/gateway.js';
+import { createGateway, runDatabaseKeepalive } from '../src/gateway.js';
 
 const env = { BUSINESS_GATEWAY_ENABLED: 'true' };
 const gateway = createGateway();
 const base = 'https://gaojiaxin-check.pet-food-advisor.asia';
+
+test('scheduled keepalive performs one fixed read without privileged credentials', async (t) => {
+  let calls = 0;
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    calls++;
+    assert.equal(url, 'https://uebeyflmmpesjolcrhnp.supabase.co/rest/v1/profiles?select=id&limit=1');
+    assert.equal(init.method, 'GET');
+    assert.equal(init.headers.apikey, 'anon-fixture');
+    assert.equal(init.headers.Authorization, 'Bearer anon-fixture');
+    return new Response('[]');
+  });
+
+  await runDatabaseKeepalive({ SUPABASE_ANON_KEY: 'anon-fixture' });
+  assert.equal(calls, 1);
+});
 
 test('candidate is disabled unless explicitly enabled', async (t) => {
   t.mock.method(globalThis, 'fetch', () => { throw new Error('must not call'); });

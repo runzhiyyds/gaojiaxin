@@ -6,6 +6,24 @@ const methods = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'];
 const allowedHeaders = ['authorization', 'apikey', 'content-type', 'accept', 'prefer',
   'x-client-info', 'range', 'x-upsert', 'if-none-match', 'if-modified-since',
   'x-supabase-api-version', 'x-request-id'];
+const keepaliveUrl = origin + '/rest/v1/profiles?select=id&limit=1';
+
+export async function runDatabaseKeepalive(env, { timeoutMs = 8000 } = {}) {
+  if (!env.SUPABASE_ANON_KEY) throw new Error('SUPABASE_ANON_KEY is not configured');
+  const response = await fetch(keepaliveUrl, {
+    method: 'GET',
+    redirect: 'manual',
+    signal: AbortSignal.timeout(timeoutMs),
+    headers: {
+      Accept: 'application/json',
+      apikey: env.SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${env.SUPABASE_ANON_KEY}`,
+    },
+    cf: { cacheTtl: 0, cacheEverything: false },
+  });
+  await response.body?.cancel();
+  if (!response.ok) throw new Error(`Database keepalive failed: ${response.status}`);
+}
 
 function cors(headers = new Headers()) {
   headers.set('Access-Control-Allow-Origin', '*');
@@ -25,6 +43,10 @@ function error(status, message, code) {
 // Fixed-project business gateway. index.js remains available for rollback.
 export function createGateway({ timeoutMs = 10000 } = {}) {
   return {
+    async scheduled(_controller, env, ctx) {
+      ctx.waitUntil(runDatabaseKeepalive(env));
+    },
+
     async fetch(request, env = {}) {
       const url = new URL(request.url);
       if (url.pathname === '/health') return health.fetch(request);

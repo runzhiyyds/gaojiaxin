@@ -4,6 +4,8 @@
 
 `GET /health` 继续固定读取原项目 `/auth/v1/health`，健康检测不转发客户端凭据；401 是未携带密钥时的预期健康响应。业务路径允许 Auth、REST/RPC、Storage、Realtime，固定原项目上游，转发客户端公开密钥、用户 JWT 与登录请求；没有服务端密钥或请求日志。鉴权与 RLS 仍由 Supabase 执行。
 
+Worker 每天 UTC 02:17 和 14:17 使用 Cloudflare Secret 中的 Supabase 客户端公开密钥执行一次固定的只读查询，用于降低免费项目因长期无数据库活动而休眠的概率。该任务不使用 `service_role`，不写业务数据，失败不自动重放。它只保活服务端，不代表 Android 后台进程常驻。
+
 本地验证（Node.js 18+）：
 
 ```bash
