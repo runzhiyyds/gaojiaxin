@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:love_story/core/cache/app_cache.dart';
 import 'package:love_story/core/cache/persistent_snapshot_store.dart';
+import 'package:love_story/core/background_read_retry.dart';
 import 'package:love_story/core/load_feedback.dart';
 import 'package:love_story/core/theme.dart';
 import 'package:love_story/core/user_error.dart';
@@ -47,6 +48,7 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
   String? _snapshotIdentity;
   Timer? _realtimeDebounce;
   RealtimeChannel? _channel;
+  final BackgroundReadRetry _backgroundRetry = BackgroundReadRetry();
 
   int _recordTabIndex = 0;
   String _noteSearchQuery = '';
@@ -60,12 +62,31 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
 
   /// 用户主动下拉刷新时调用：先使缓存失效再拉取，保证看到最新数据。
   Future<void> _refresh() async {
+    _backgroundRetry.reset(onStateChanged: _notifyRetryStateChanged);
     final spaceId = context.read<CoupleService>().coupleSpaceId;
     if (spaceId != null) {
       _invalidateSpaceCaches(spaceId);
     }
     await context.read<CoupleService>().refresh();
     if (mounted) await _load();
+  }
+
+  void _notifyRetryStateChanged() {
+    if (mounted) setState(() {});
+  }
+
+  bool _isRetryableLoadMessage(String? message) =>
+      message != null &&
+      (message.contains('无法连接服务') || message.contains('连接服务超时'));
+
+  void _scheduleBackgroundRetry() {
+    _backgroundRetry.schedule(
+      () async {
+        await context.read<CoupleService>().refresh();
+        if (mounted) await _load(silent: true);
+      },
+      onStateChanged: _notifyRetryStateChanged,
+    );
   }
 
   void _invalidateSpaceCaches(String spaceId) {
@@ -76,6 +97,7 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
 
   void _resetViewState({bool keepLoading = false}) {
     if (!mounted) return;
+    _backgroundRetry.reset();
     _loadVersion++;
     setState(() {
       _hasData = false;
@@ -118,6 +140,7 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
         _syncing = false;
         _loadError = couple.error;
       });
+      if (_isRetryableLoadMessage(couple.error)) _scheduleBackgroundRetry();
       return;
     }
     final spaceId = couple.coupleSpaceId;
@@ -208,6 +231,7 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
           _showingCachedSnapshot = false;
           _lastSyncedAt = syncedAt;
         });
+        _backgroundRetry.reset(onStateChanged: _notifyRetryStateChanged);
         if (userId != null && _filterDateRange == null && _filterPointItemId == null) {
           unawaited(PersistentSnapshotStore.instance.writePointsHome(PointsHomeSnapshot(
             userId: userId,
@@ -232,6 +256,7 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
         if (_hasData) _showingCachedSnapshot = true;
         _loadError = toUserMessage(e, context: '心意页加载');
       });
+      if (isNetworkFailure(e)) _scheduleBackgroundRetry();
     }
   }
 
@@ -374,6 +399,7 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
   void dispose() {
     _loadVersion++;
     _realtimeDebounce?.cancel();
+    _backgroundRetry.dispose();
     _noteSearchController.dispose();
     WidgetsBinding.instance.removeObserver(this);
     _channel?.unsubscribe();
@@ -1092,7 +1118,12 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
                     if (_hasData && (_syncing || _showingCachedSnapshot))
                       _buildSnapshotStatus(context),
                     if (_loadError != null)
-                      RefreshNotice(message: _loadError!, onRetry: _refresh),
+                      RefreshNotice(
+                        message: _loadError!,
+                        onRetry: _refresh,
+                        autoRetrying: _backgroundRetry.isScheduled,
+                        cachedReadOnly: _showingCachedSnapshot,
+                      ),
                     if (isLoggedIn && isBound) _buildPointsBalanceCard(context),
                     const SizedBox(height: 16),
                     if (isLoggedIn && !isBound)

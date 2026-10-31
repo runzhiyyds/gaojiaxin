@@ -23,11 +23,22 @@ class LoadFeedback extends StatelessWidget {
 
 class RefreshNotice extends StatelessWidget {
   const RefreshNotice(
-      {super.key, required this.message, required this.onRetry});
+      {super.key,
+      required this.message,
+      required this.onRetry,
+      this.autoRetrying = false,
+      this.cachedReadOnly = false});
   final String message;
   final VoidCallback onRetry;
+  final bool autoRetrying;
+  final bool cachedReadOnly;
 
   String get _displayMessage {
+    if (autoRetrying) {
+      return cachedReadOnly
+          ? '后台自动重试中。你可继续查看，也可检查网络；同步成功后可编辑。'
+          : '后台自动重试中，你也可以检查网络。';
+    }
     if (message.contains('无法连接服务') || message.contains('连接服务超时')) {
       return '网络不稳定，暂未同步';
     }
@@ -41,7 +52,10 @@ class RefreshNotice extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           child: Row(children: [
             Expanded(child: Text(_displayMessage)),
-            TextButton(onPressed: onRetry, child: const Text('重试')),
+            TextButton(
+              onPressed: onRetry,
+              child: Text(autoRetrying ? '立即重试' : '重试'),
+            ),
           ]),
         ),
       );
