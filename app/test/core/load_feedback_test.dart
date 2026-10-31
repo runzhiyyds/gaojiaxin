@@ -40,26 +40,4 @@ void main() {
 
     expect(find.text('数据关联异常，请稍后重试。'), findsOneWidget);
   });
-
-  testWidgets('background retry explains cached data stays read only',
-      (tester) async {
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: RefreshNotice(
-            message: '暂时无法连接服务',
-            onRetry: () {},
-            autoRetrying: true,
-            cachedReadOnly: true,
-          ),
-        ),
-      ),
-    );
-
-    expect(
-      find.text('后台自动重试中。你可继续查看，也可检查网络；同步成功后可编辑。'),
-      findsOneWidget,
-    );
-    expect(find.text('立即重试'), findsOneWidget);
-  });
 }

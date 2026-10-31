@@ -42,7 +42,6 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
   bool _hasData = false;
   bool _syncing = false;
   bool _showingCachedSnapshot = false;
-  DateTime? _lastSyncedAt;
   String? _loadError;
   int _loadVersion = 0;
   String? _snapshotIdentity;
@@ -89,6 +88,18 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
     );
   }
 
+  bool get _writesReady =>
+      !_syncing && !_showingCachedSnapshot && _loadError == null;
+
+  void _showWriteSyncNotice() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('正在同步最新数据，暂时无法提交；网络恢复后会自动开放。'),
+        action: SnackBarAction(label: '立即同步', onPressed: _refresh),
+      ),
+    );
+  }
+
   void _invalidateSpaceCaches(String spaceId) {
     context.read<PointsRepository>().invalidateForSpace(spaceId);
     context.read<MallRepository>().invalidateForSpace(spaceId);
@@ -104,7 +115,6 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
       _loadError = null;
       _syncing = false;
       _showingCachedSnapshot = false;
-      _lastSyncedAt = null;
       _snapshotIdentity = null;
       _items = [];
       _records = [];
@@ -229,7 +239,6 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
           _syncing = false;
           _hasData = true;
           _showingCachedSnapshot = false;
-          _lastSyncedAt = syncedAt;
         });
         _backgroundRetry.reset(onStateChanged: _notifyRetryStateChanged);
         if (userId != null && _filterDateRange == null && _filterPointItemId == null) {
@@ -291,7 +300,6 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
         _loading = false;
         _hasData = true;
         _showingCachedSnapshot = true;
-        _lastSyncedAt = cached.savedAt;
       });
     }
     await _load(silent: snapshot != null);
@@ -521,6 +529,10 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
       }
       return;
     }
+    if (!_writesReady) {
+      _showWriteSyncNotice();
+      return;
+    }
     context.push('/home/points/record').then((_) => _load());
   }
 
@@ -560,7 +572,7 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
   void _openRecordDetailDialog(BuildContext context, PointRecordModel r) {
     final userId = context.read<AuthService>().currentUser?.id;
     final iAmRecipient = userId != null && r.userId == userId;
-    final canMutate = !_syncing && !_showingCachedSnapshot && _loadError == null;
+    final canMutate = _writesReady;
 
     PointItemModel? item;
     for (final e in _items) {
@@ -630,17 +642,21 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
                   },
                 )
               else if (iAmRecipient) ...[
-                const Divider(height: 24),
-                Text(
-                  '当前为本地只读数据，同步成功后可编辑回应。',
-                  style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
-                        color: AppTheme.secondary,
-                      ),
-                ),
                 ...buildPartnerRecipientCommentReadOnlySection(
                   context: ctx,
                   record: r,
                   title: '我的回应',
+                ),
+                const Divider(height: 24),
+                OutlinedButton.icon(
+                  icon: Icon(r.hasRecipientComment
+                      ? Icons.edit_outlined
+                      : Icons.chat_bubble_outline),
+                  label: Text(r.hasRecipientComment ? '编辑回应' : '写回应'),
+                  onPressed: () {
+                    Navigator.of(ctx).pop();
+                    _showWriteSyncNotice();
+                  },
                 ),
               ] else
                 ...buildPartnerRecipientCommentReadOnlySection(context: ctx, record: r),
@@ -767,36 +783,6 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
     );
   }
 
-  String _snapshotStatusText() {
-    if (_syncing) return '本地数据仅供查看，正在同步；同步后开放编辑…';
-    final syncedAt = _lastSyncedAt?.toLocal();
-    if (syncedAt == null) return '当前显示本地只读数据，请重试同步后再编辑';
-    final hour = syncedAt.hour.toString().padLeft(2, '0');
-    final minute = syncedAt.minute.toString().padLeft(2, '0');
-    return '当前显示 $hour:$minute 的本地只读数据，请同步后再编辑';
-  }
-
-  Widget _buildSnapshotStatus(BuildContext context) => Container(
-    margin: const EdgeInsets.only(bottom: 12),
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-    decoration: BoxDecoration(
-      color: Theme.of(context).colorScheme.surfaceContainerHighest,
-      borderRadius: BorderRadius.circular(10),
-    ),
-    child: Row(
-      children: [
-        Icon(_syncing ? Icons.sync : Icons.cloud_off_outlined,
-            size: 18, color: AppTheme.secondary),
-        const SizedBox(width: 8),
-        Expanded(child: Text(_snapshotStatusText(),
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: AppTheme.secondary,
-          ),
-        )),
-      ],
-    ),
-  );
-
   Widget _buildRecordFilters(BuildContext context) {
     return Card(
       child: Padding(
@@ -916,7 +902,6 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
 
     bool _canEdit(PointRecordModel r) {
       // 仅允许「我奖励 TA」tab 且该记录尚未使用编辑机会时操作。
-      if (_syncing || _showingCachedSnapshot || _loadError != null) return false;
       if (_recordTabIndex != 1) return false;
       if (!r.canEditOnce) return false;
       return partnerId != null && r.userId == partnerId;
@@ -924,7 +909,6 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
 
     bool _canDelete(PointRecordModel r) {
       // 「我奖励 TA」tab 下，该条主记录均可删除（与是否已编辑无关）。
-      if (_syncing || _showingCachedSnapshot || _loadError != null) return false;
       if (_recordTabIndex != 1) return false;
       return partnerId != null && r.userId == partnerId;
     }
@@ -1012,6 +996,10 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
             trailing: canOperate
                 ? PopupMenuButton<String>(
                     onSelected: (value) async {
+                      if (!_writesReady) {
+                        _showWriteSyncNotice();
+                        return;
+                      }
                       if (value == 'edit') {
                         final changed = await context.push<bool>(
                           '/home/points/record/edit',
@@ -1115,15 +1103,6 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    if (_hasData && (_syncing || _showingCachedSnapshot))
-                      _buildSnapshotStatus(context),
-                    if (_loadError != null)
-                      RefreshNotice(
-                        message: _loadError!,
-                        onRetry: _refresh,
-                        autoRetrying: _backgroundRetry.isScheduled,
-                        cachedReadOnly: _showingCachedSnapshot,
-                      ),
                     if (isLoggedIn && isBound) _buildPointsBalanceCard(context),
                     const SizedBox(height: 16),
                     if (isLoggedIn && !isBound)
