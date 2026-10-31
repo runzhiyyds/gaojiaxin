@@ -27,13 +27,20 @@ class RefreshNotice extends StatelessWidget {
   final String message;
   final VoidCallback onRetry;
 
+  String get _displayMessage {
+    if (message.contains('无法连接服务') || message.contains('连接服务超时')) {
+      return '网络不稳定，暂未同步';
+    }
+    return message;
+  }
+
   @override
   Widget build(BuildContext context) => Material(
         color: Theme.of(context).colorScheme.surfaceContainerHighest,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           child: Row(children: [
-            Expanded(child: Text('刷新失败，以下为上次加载的内容。$message')),
+            Expanded(child: Text(_displayMessage)),
             TextButton(onPressed: onRetry, child: const Text('重试')),
           ]),
         ),
