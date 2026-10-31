@@ -156,6 +156,7 @@ class _LoveJourneyScreenState extends State<LoveJourneyScreen> with WidgetsBindi
     final spaceId = context.read<CoupleService>().coupleSpaceId;
     if (spaceId == null) return;
     context.read<PointsRepository>().invalidateForSpace(spaceId);
+    _subscribeRealtime();
     _load();
   }
 

@@ -408,6 +408,7 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
     final spaceId = context.read<CoupleService>().coupleSpaceId;
     if (spaceId == null) return;
     _invalidateSpaceCaches(spaceId);
+    _subscribeRealtime();
     _load(silent: true);
   }
 
@@ -521,6 +522,7 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
   void _openRecordDetailDialog(BuildContext context, PointRecordModel r) {
     final userId = context.read<AuthService>().currentUser?.id;
     final iAmRecipient = userId != null && r.userId == userId;
+    final canMutate = !_syncing && !_showingCachedSnapshot && _loadError == null;
 
     PointItemModel? item;
     for (final e in _items) {
@@ -563,7 +565,7 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
                       height: 1.4,
                     ),
               ),
-              if (iAmRecipient)
+              if (iAmRecipient && canMutate)
                 ...buildRecipientCommentDetailSection(
                   context: ctx,
                   record: r,
@@ -588,7 +590,20 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
                     }
                   },
                 )
-              else
+              else if (iAmRecipient) ...[
+                const Divider(height: 24),
+                Text(
+                  '当前为本地只读数据，同步成功后可编辑回应。',
+                  style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
+                        color: AppTheme.secondary,
+                      ),
+                ),
+                ...buildPartnerRecipientCommentReadOnlySection(
+                  context: ctx,
+                  record: r,
+                  title: '我的回应',
+                ),
+              ] else
                 ...buildPartnerRecipientCommentReadOnlySection(context: ctx, record: r),
             ],
           ),
@@ -714,12 +729,12 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
   }
 
   String _snapshotStatusText() {
-    if (_syncing) return '已先显示本地数据，正在同步最新内容…';
+    if (_syncing) return '本地数据仅供查看，正在同步；同步后开放编辑…';
     final syncedAt = _lastSyncedAt?.toLocal();
-    if (syncedAt == null) return '当前显示上次成功同步的数据';
+    if (syncedAt == null) return '当前显示本地只读数据，请重试同步后再编辑';
     final hour = syncedAt.hour.toString().padLeft(2, '0');
     final minute = syncedAt.minute.toString().padLeft(2, '0');
-    return '当前显示 ${syncedAt.month}/${syncedAt.day} $hour:$minute 的本地数据';
+    return '当前显示 $hour:$minute 的本地只读数据，请同步后再编辑';
   }
 
   Widget _buildSnapshotStatus(BuildContext context) => Container(
@@ -862,6 +877,7 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
 
     bool _canEdit(PointRecordModel r) {
       // 仅允许「我奖励 TA」tab 且该记录尚未使用编辑机会时操作。
+      if (_syncing || _showingCachedSnapshot || _loadError != null) return false;
       if (_recordTabIndex != 1) return false;
       if (!r.canEditOnce) return false;
       return partnerId != null && r.userId == partnerId;
@@ -869,6 +885,7 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
 
     bool _canDelete(PointRecordModel r) {
       // 「我奖励 TA」tab 下，该条主记录均可删除（与是否已编辑无关）。
+      if (_syncing || _showingCachedSnapshot || _loadError != null) return false;
       if (_recordTabIndex != 1) return false;
       return partnerId != null && r.userId == partnerId;
     }

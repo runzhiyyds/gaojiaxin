@@ -162,6 +162,7 @@ class _MallScreenState extends State<MallScreen> with WidgetsBindingObserver {
     context.read<MallRepository>().invalidateForSpace(spaceId);
     context.read<PointsRepository>().invalidateForSpace(spaceId);
     context.read<DepositsRepository>().invalidateForSpace(spaceId);
+    _subscribeRealtime();
     _load(silent: true);
   }
 
