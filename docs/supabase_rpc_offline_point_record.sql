@@ -65,11 +65,11 @@ BEGIN
   IF NOT FOUND THEN
     RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'couple space is not accessible';
   END IF;
-  IF p_partner_user_id = current_user_id OR
-     p_partner_user_id <> CASE
-       WHEN space_row.user_a_id = current_user_id THEN space_row.user_b_id
-       ELSE space_row.user_a_id
-     END THEN
+  IF p_partner_user_id = current_user_id OR NOT (
+    (space_row.user_a_id = current_user_id AND space_row.user_b_id = p_partner_user_id)
+    OR
+    (space_row.user_b_id = current_user_id AND space_row.user_a_id = p_partner_user_id)
+  ) THEN
     RAISE EXCEPTION USING ERRCODE = '23514', MESSAGE = '对方账号已变化';
   END IF;
 
