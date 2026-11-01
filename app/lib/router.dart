@@ -12,6 +12,7 @@ import 'package:love_story/features/journey/love_journey_screen.dart';
 import 'package:love_story/features/splash/splash_screen.dart';
 import 'package:love_story/features/points/record_edit_screen.dart';
 import 'package:love_story/features/points/point_record_model.dart';
+import 'package:love_story/features/points/point_item_model.dart';
 import 'package:love_story/features/points/record_point_screen.dart';
 import 'package:love_story/features/mall/mall_good_edit_screen.dart';
 import 'package:love_story/features/mall/mall_good_detail_screen.dart';
@@ -94,7 +95,11 @@ GoRouter createRouter(AuthService authService) {
                 routes: [
                   GoRoute(
                     path: 'record',
-                    builder: (_, __) => const RecordPointScreen(),
+                    builder: (_, state) => RecordPointScreen(
+                      initialItems: state.extra is List<PointItemModel>
+                          ? state.extra as List<PointItemModel>
+                          : const [],
+                    ),
                   ),
                   GoRoute(
                     path: 'record/edit',

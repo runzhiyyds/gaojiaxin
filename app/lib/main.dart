@@ -12,6 +12,7 @@ import 'package:love_story/router.dart';
 import 'package:love_story/features/auth/auth_service.dart';
 import 'package:love_story/features/couple/couple_service.dart';
 import 'package:love_story/features/points/points_repository.dart';
+import 'package:love_story/features/points/offline_record_queue.dart';
 import 'package:love_story/features/mall/mall_repository.dart';
 import 'package:love_story/features/deposits/deposits_repository.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -89,6 +90,13 @@ class _BootstrapAppState extends State<_BootstrapApp> {
             ChangeNotifierProvider(create: (_) => authService),
             ChangeNotifierProvider(create: (_) => CoupleService()),
             Provider(create: (_) => PointsRepository(Supabase.instance.client)),
+            ChangeNotifierProvider(
+              lazy: false,
+              create: (ctx) => OfflineRecordQueue(
+                client: Supabase.instance.client,
+                pointsRepository: ctx.read<PointsRepository>(),
+              ),
+            ),
             Provider(create: (_) => MallRepository(Supabase.instance.client)),
             Provider(
                 create: (ctx) => DepositsRepository(

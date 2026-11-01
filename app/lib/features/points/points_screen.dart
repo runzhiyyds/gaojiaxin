@@ -14,6 +14,7 @@ import 'package:love_story/features/points/points_repository.dart';
 import 'package:love_story/features/points/random_bonus_util.dart';
 import 'package:love_story/features/points/recipient_comment_ui.dart';
 import 'package:love_story/features/points/love_dimension.dart';
+import 'package:love_story/features/points/offline_record_queue_panel.dart';
 import 'package:love_story/features/mall/mall_repository.dart';
 import 'package:love_story/features/deposits/deposits_repository.dart';
 import 'package:go_router/go_router.dart';
@@ -529,11 +530,11 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
       }
       return;
     }
-    if (!_writesReady) {
+    if (_items.isEmpty) {
       _showWriteSyncNotice();
       return;
     }
-    context.push('/home/points/record').then((_) => _load());
+    context.push('/home/points/record', extra: _items).then((_) => _load());
   }
 
   IconData _iconFor(String name) {
@@ -1172,6 +1173,7 @@ class _PointsScreenState extends State<PointsScreen> with WidgetsBindingObserver
                                 : '记一笔（需对方关联）',
                       ),
                     ),
+                    const OfflineRecordQueuePanel(),
                     const SizedBox(height: 8),
                     OutlinedButton.icon(
                       onPressed: !isLoggedIn
