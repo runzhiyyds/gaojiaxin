@@ -1,4 +1,5 @@
 import 'package:love_story/core/cache/app_cache.dart';
+import 'package:love_story/core/supabase_guard.dart';
 import 'package:love_story/features/deposits/point_deposit_model.dart';
 import 'package:love_story/features/points/points_repository.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -63,20 +64,19 @@ class DepositsRepository {
   /// 当前用户在该空间下锁定在定期中的本金总和（status=active）
   Future<int> getLockedPrincipal(String coupleSpaceId, String userId) async {
     final key = '$_kLocked$coupleSpaceId:$userId';
-    final cached = _cache.get<int>(key);
-    if (cached != null) return cached;
-    final res = await _client
-        .from('point_deposits')
-        .select('principal')
-        .eq('couple_space_id', coupleSpaceId)
-        .eq('user_id', userId)
-        .eq('status', 'active');
-    var sum = 0;
-    for (final row in res as List) {
-      sum += (row['principal'] as num).toInt();
-    }
-    _cache.set(key, sum);
-    return sum;
+    return _cache.getOrLoad(key, () async {
+      final res = await _client
+          .from('point_deposits')
+          .select('principal')
+          .eq('couple_space_id', coupleSpaceId)
+          .eq('user_id', userId)
+          .eq('status', 'active');
+      var sum = 0;
+      for (final row in res as List) {
+        sum += (row['principal'] as num).toInt();
+      }
+      return sum;
+    });
   }
 
   /// 当前用户的定期存款列表（含已兑付/提前支取），按创建时间倒序
@@ -98,26 +98,27 @@ class DepositsRepository {
   }
 
   /// 存入定期：仅写入 point_deposits，不扣减心意值（本金仍在总余额中，仅从可用变为锁定）
-  /// 调用方需保证 availableBalance >= principal
+  /// 服务端在事务内重新计算可用余额；客户端余额仅用于输入提示。
   Future<PointDepositModel> createDeposit({
     required String coupleSpaceId,
-    required String userId,
     required DepositProductType productType,
     required int principal,
+    required String requestId,
   }) async {
-    final now = DateTime.now();
-    final months = productType.months;
-    final endAt = DateTime(now.year, now.month + months, now.day, now.hour, now.minute, now.second);
-    final res = await _client.from('point_deposits').insert({
-      'couple_space_id': coupleSpaceId,
-      'user_id': userId,
-      'product_type': productType.value,
-      'principal': principal,
-      'interest_rate': productType.rate,
-      'start_at': now.toIso8601String(),
-      'end_at': endAt.toIso8601String(),
-      'status': 'active',
-    }).select().single();
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) throw Exception('请先登录');
+    final res = await withSupabaseCall(
+      () => _client.rpc(
+        'create_point_deposit_atomic',
+        params: {
+          'p_couple_space_id': coupleSpaceId,
+          'p_product_type': productType.value,
+          'p_principal': principal,
+          'p_request_id': requestId,
+        },
+      ),
+      isRead: false,
+    );
     _invalidate(coupleSpaceId, userId);
     _cache.removeByPrefix(_kLocked);
     _cache.removeByPrefix(_kList);
@@ -150,12 +151,25 @@ class DepositsRepository {
         'principal': currentPrincipal + principal,
       }).eq('id', id);
     } else {
-      await createDeposit(
-        coupleSpaceId: coupleSpaceId,
-        userId: userId,
-        productType: productType,
-        principal: principal,
+      final now = DateTime.now();
+      final endAt = DateTime(
+        now.year,
+        now.month + productType.months,
+        now.day,
+        now.hour,
+        now.minute,
+        now.second,
       );
+      await _client.from('point_deposits').insert({
+        'couple_space_id': coupleSpaceId,
+        'user_id': userId,
+        'product_type': productType.value,
+        'principal': principal,
+        'interest_rate': productType.rate,
+        'start_at': now.toIso8601String(),
+        'end_at': endAt.toIso8601String(),
+        'status': 'active',
+      });
     }
     _invalidate(coupleSpaceId, userId);
     _cache.removeByPrefix(_kLocked);

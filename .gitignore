@@ -36,3 +36,10 @@ app/**/Pods/
 app/**/.symlinks/
 app/**/Flutter/Flutter.framework
 app/**/Flutter/Flutter.podspec
+
+# Python local cache
+**/__pycache__/
+*.pyc
+
+# Recoverable, generated build cache backups
+app/.workflow-cache-backups/

@@ -1,0 +1,13 @@
+// Business gateway enabled with owner authorization on 2026-10-13.
+{
+  "name": "gaojiaxin-network-check",
+  "main": "src/gateway.js",
+  "compatibility_date": "2026-10-13",
+  "workers_dev": true,
+  "routes": [
+    { "pattern": "gaojiaxin-check.pet-food-advisor.asia", "custom_domain": true }
+  ],
+  "triggers": { "crons": ["17 2,14 * * *"] },
+  "vars": { "BUSINESS_GATEWAY_ENABLED": "true" },
+  "observability": { "enabled": false }
+}

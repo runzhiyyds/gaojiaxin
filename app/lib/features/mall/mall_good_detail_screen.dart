@@ -11,6 +11,7 @@ import 'package:love_story/features/deposits/deposits_repository.dart';
 import 'package:provider/provider.dart';
 import 'package:love_story/features/auth/auth_service.dart';
 import 'package:love_story/features/couple/couple_service.dart';
+import 'package:uuid/uuid.dart';
 
 class MallGoodDetailScreen extends StatefulWidget {
   const MallGoodDetailScreen({super.key, required this.goodId});
@@ -25,6 +26,7 @@ class _MallGoodDetailScreenState extends State<MallGoodDetailScreen> {
   MallGoodModel? good;
   bool _loading = true;
   bool _exchanging = false;
+  String? _pendingExchangeRequestId;
 
   @override
   void initState() {
@@ -53,25 +55,17 @@ class _MallGoodDetailScreenState extends State<MallGoodDetailScreen> {
     final pointsRepo = context.read<PointsRepository>();
     final mallRepo = context.read<MallRepository>();
     final depositsRepo = context.read<DepositsRepository>();
-    final earned = await pointsRepo.getTotalPointsEarned(spaceId, userId);
-    final spent = await mallRepo.getTotalPointsSpent(spaceId, userId);
-    final locked = await depositsRepo.getLockedPrincipal(spaceId, userId);
-    return earned - spent - locked;
+    final totals = await Future.wait<int>([
+      pointsRepo.getTotalPointsEarned(spaceId, userId),
+      mallRepo.getTotalPointsSpent(spaceId, userId),
+      depositsRepo.getLockedPrincipal(spaceId, userId),
+    ]);
+    return totals[0] - totals[1] - totals[2];
   }
 
   Future<void> _exchange(BuildContext context, MallGoodModel good) async {
     final spaceId = context.read<CoupleService>().coupleSpaceId;
-    final userId = context.read<AuthService>().currentUser?.id;
-    if (spaceId == null || userId == null) return;
-    final balance = await _currentBalance(context);
-    if (balance < good.pointsRequired) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('可用兑换余额不足，当前：${formatHeartValueDisplay(balance)}')),
-        );
-      }
-      return;
-    }
+    if (spaceId == null) return;
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -88,11 +82,10 @@ class _MallGoodDetailScreenState extends State<MallGoodDetailScreen> {
     try {
       await context.read<MallRepository>().exchange(
         coupleSpaceId: spaceId,
-        userId: userId,
         mallGoodId: good.id,
-        pointsRequired: good.pointsRequired,
-        userBalance: balance,
+        requestId: _pendingExchangeRequestId ??= const Uuid().v4(),
       );
+      _pendingExchangeRequestId = null;
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('兑换成功')));
         context.pop();
@@ -138,10 +131,10 @@ class _MallGoodDetailScreenState extends State<MallGoodDetailScreen> {
       body: FutureBuilder<int>(
         future: _currentBalance(context),
         builder: (context, snapshot) {
-          final balance = snapshot.data ?? 0;
-          final canExchangeNow = userId != null &&
-              balance >= g.pointsRequired &&
-              (g.isUnlimited || (g.stock ?? 0) > 0);
+          final balance = snapshot.data;
+          final hasStock = g.isUnlimited || (g.stock ?? 0) > 0;
+          // 显示余额只是提示；真正的余额与库存校验由事务 RPC 在写入瞬间完成。
+          final canExchangeNow = userId != null && hasStock;
           return RefreshIndicator(
             onRefresh: _onRefresh,
             child: SingleChildScrollView(
@@ -184,7 +177,9 @@ class _MallGoodDetailScreenState extends State<MallGoodDetailScreen> {
                 if (userId != null) ...[
                   const SizedBox(height: 16),
                   Text(
-                    '我的可用兑换余额：${formatHeartValueDisplay(balance)} 心意值',
+                    balance == null
+                        ? '我的可用兑换余额：正在同步…'
+                        : '我的可用兑换余额：${formatHeartValueDisplay(balance)} 心意值',
                     style: Theme.of(context).textTheme.bodyMedium,
                   ),
                   const SizedBox(height: 24),
@@ -203,9 +198,7 @@ class _MallGoodDetailScreenState extends State<MallGoodDetailScreen> {
                                 ? '用我的兑换余额兑换'
                                 : (!hasPartner
                                     ? '对方未关联，点击去关联'
-                                    : balance < g.pointsRequired
-                                        ? '可用兑换余额不足'
-                                        : '库存不足'),
+                                    : '库存不足'),
                           ),
                   ),
                 ],

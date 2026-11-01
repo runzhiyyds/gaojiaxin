@@ -15,6 +15,13 @@ class Config {
     defaultValue: 'REPLACE_ME',
   );
 
+  /// Keep the original project's session namespace when using another API host.
+  /// Empty preserves the SDK's default key for other projects.
+  static const String supabaseAuthStorageKey = String.fromEnvironment(
+    'SUPABASE_AUTH_STORAGE_KEY',
+    defaultValue: '',
+  );
+
   /// 是否为未替换的占位配置（未传 --dart-define 时的 release 包）
   static bool get isSupabaseConfigured =>
       !supabaseUrl.contains('REPLACE_ME') && !supabaseAnonKey.contains('REPLACE_ME');

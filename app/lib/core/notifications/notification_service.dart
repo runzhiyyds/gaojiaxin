@@ -11,7 +11,8 @@ import 'package:love_story/firebase_options.dart';
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   try {
-    await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+    await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform);
   } catch (_) {}
 }
 
@@ -25,13 +26,25 @@ class NotificationService {
       FlutterLocalNotificationsPlugin();
 
   bool _initialized = false;
+  Future<void>? _initializing;
+  StreamSubscription<RemoteMessage>? _foregroundSubscription;
+  bool _permissionsRequested = false;
 
   /// 初始化 Firebase Messaging & 本地通知；未配置 Firebase 时仅做兜底不抛错
-  Future<void> init() async {
-    if (_initialized) return;
+  Future<void> init() {
+    if (_initialized) return Future.value();
+    return _initializing ??=
+        _initialize().whenComplete(() => _initializing = null);
+  }
 
+  Future<void> _initialize() async {
+    if (kIsWeb) {
+      _initialized = true;
+      return;
+    }
     try {
-      await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+      await Firebase.initializeApp(
+          options: DefaultFirebaseOptions.currentPlatform);
       _messaging = FirebaseMessaging.instance;
     } catch (_) {
       if (kDebugMode) debugPrint('Firebase 未配置或初始化失败，推送功能将不可用');
@@ -40,7 +53,11 @@ class NotificationService {
 
     // 本地通知初始化（用于前台消息）
     const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const darwinInit = DarwinInitializationSettings();
+    const darwinInit = DarwinInitializationSettings(
+      requestAlertPermission: false,
+      requestBadgePermission: false,
+      requestSoundPermission: false,
+    );
     const initSettings =
         InitializationSettings(android: androidInit, iOS: darwinInit);
 
@@ -52,18 +69,17 @@ class NotificationService {
       },
     );
 
-    // Android 13+ 请求通知权限（仅一次）
-    final androidImpl =
-        _local.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
-    await androidImpl?.requestNotificationsPermission();
-
     _initialized = true;
   }
 
   /// 请求通知权限（主要针对 iOS）；未配置 Firebase 时静默返回
   Future<void> requestPermissionsIfNeeded() async {
     await init();
-    if (_messaging == null) return;
+    if (_messaging == null || _permissionsRequested) return;
+    _permissionsRequested = true;
+    final androidImpl = _local.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    await androidImpl?.requestNotificationsPermission();
     final settings = await _messaging!.requestPermission(
       alert: true,
       badge: true,
@@ -76,8 +92,9 @@ class NotificationService {
 
   /// 注册前台消息监听，并在前台弹出本地通知；未配置 Firebase 时不注册
   void listenForegroundMessages() {
-    if (_messaging == null) return;
-    FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
+    if (_messaging == null || _foregroundSubscription != null) return;
+    _foregroundSubscription =
+        FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
       final notification = message.notification;
       final android = notification?.android;
       final title = notification?.title ?? '新提醒';
@@ -100,7 +117,7 @@ class NotificationService {
         title,
         body.isEmpty ? null : body,
         details,
-      payload: message.data.isNotEmpty ? jsonEncode(message.data) : null,
+        payload: message.data.isNotEmpty ? jsonEncode(message.data) : null,
       );
 
       if (kDebugMode) {
@@ -109,4 +126,3 @@ class NotificationService {
     });
   }
 }
-

@@ -77,6 +77,7 @@ class FakePointsRepository implements IPointsRepository {
     DateTime? to,
     String? pointItemId,
     int limit = 50,
+    int offset = 0,
   }) async {
     var list = _records.where((e) => e.coupleSpaceId == coupleSpaceId);
     if (pointItemId != null) {
@@ -88,7 +89,7 @@ class FakePointsRepository implements IPointsRepository {
     if (to != null) {
       list = list.where((e) => !e.recordAt.isAfter(to));
     }
-    return list.take(limit).toList();
+    return list.skip(offset).take(limit).toList();
   }
 
   @override

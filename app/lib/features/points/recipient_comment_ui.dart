@@ -35,12 +35,13 @@ Widget? buildRecipientResponseBadgeChip({
 List<Widget> buildPartnerRecipientCommentReadOnlySection({
   required BuildContext context,
   required PointRecordModel record,
+  String title = '对方回应',
 }) {
   if (!record.hasRecipientComment) return [];
   return [
     const Divider(height: 24),
     Text(
-      '对方回应',
+      title,
       style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
     ),
     const SizedBox(height: 8),

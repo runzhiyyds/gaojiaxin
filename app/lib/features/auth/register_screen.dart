@@ -4,7 +4,7 @@ import 'package:love_story/core/theme.dart';
 import 'package:love_story/core/settings_prefs.dart';
 import 'package:provider/provider.dart';
 import 'package:love_story/features/auth/auth_service.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:love_story/core/user_error.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -32,9 +32,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   Future<void> _submit() async {
-    _error = null;
-    if (!_formKey.currentState!.validate()) return;
-    setState(() => _loading = true);
+    if (_loading || !_formKey.currentState!.validate()) return;
+    setState(() {
+      _error = null;
+      _loading = true;
+    });
     try {
       final email = _emailController.text.trim();
       await context.read<AuthService>().signUp(
@@ -50,10 +52,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
         _registered = true;
       });
     } catch (e) {
-      String msg = '注册失败，请稍后重试';
-      if (e is AuthException) {
-        msg = e.message ?? msg;
-      }
+      if (!mounted) return;
+      final msg = toUserMessage(e, context: '注册');
       setState(() {
         _error = msg;
         _loading = false;

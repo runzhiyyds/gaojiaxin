@@ -1,4 +1,5 @@
 import 'package:love_story/features/points/love_dimension.dart';
+
 class PointRecordModel {
   PointRecordModel({
     required this.id,
@@ -13,6 +14,7 @@ class PointRecordModel {
     this.editUsedAt,
     this.recipientComment,
     this.recipientCommentAt,
+    this.rowVersion = 1,
   }) : createdAt = createdAt ?? DateTime.now();
 
   final String id;
@@ -23,13 +25,19 @@ class PointRecordModel {
   final DateTime recordAt;
   final String? note;
   final DateTime createdAt;
+
   /// 非空表示已使用「一次编辑/删除」机会，不可再改
   final DateTime? editUsedAt;
   final LoveDimension? loveDimension;
+
   /// 收件人（user_id）对这条心意的回应正文
   final String? recipientComment;
+
   /// 收件人写下/更新回应的时间
   final DateTime? recipientCommentAt;
+
+  /// 服务端并发版本；写入时必须与最新行一致，避免旧快照覆盖新数据。
+  final int rowVersion;
 
   bool get canEditOnce => editUsedAt == null;
 
@@ -56,6 +64,23 @@ class PointRecordModel {
       recipientCommentAt: json['recipient_comment_at'] != null
           ? DateTime.parse(json['recipient_comment_at'] as String)
           : null,
+      rowVersion: (json['row_version'] as num?)?.toInt() ?? 1,
     );
   }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'couple_space_id': coupleSpaceId,
+        'user_id': userId,
+        'point_item_id': pointItemId,
+        'points': points,
+        'record_at': recordAt.toUtc().toIso8601String(),
+        'note': note,
+        'created_at': createdAt.toUtc().toIso8601String(),
+        'edit_used_at': editUsedAt?.toUtc().toIso8601String(),
+        if (loveDimension != null) 'love_dimension': loveDimension!.dbValue,
+        'recipient_comment': recipientComment,
+        'recipient_comment_at': recipientCommentAt?.toUtc().toIso8601String(),
+        'row_version': rowVersion,
+      };
 }

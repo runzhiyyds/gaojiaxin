@@ -3,12 +3,10 @@ import 'package:go_router/go_router.dart';
 import 'package:love_story/core/theme.dart';
 import 'package:love_story/core/user_error.dart';
 import 'package:love_story/features/points/point_item_model.dart';
-import 'package:love_story/features/points/point_record_model.dart';
 import 'package:love_story/features/points/points_repository.dart';
 import 'package:love_story/features/points/love_dimension.dart';
 import 'package:love_story/features/points/random_bonus_util.dart';
-import 'package:love_story/features/deposits/deposits_repository.dart';
-import 'package:love_story/features/deposits/point_deposit_model.dart';
+import 'package:love_story/features/points/offline_record_queue.dart';
 import 'package:provider/provider.dart';
 import 'package:love_story/features/auth/auth_service.dart';
 import 'package:love_story/features/couple/couple_service.dart';
@@ -19,7 +17,9 @@ enum _RewardMode {
 }
 
 class RecordPointScreen extends StatefulWidget {
-  const RecordPointScreen({super.key});
+  const RecordPointScreen({super.key, this.initialItems = const []});
+
+  final List<PointItemModel> initialItems;
 
   @override
   State<RecordPointScreen> createState() => _RecordPointScreenState();
@@ -94,7 +94,29 @@ class _RecordPointScreenState extends State<RecordPointScreen> {
   void initState() {
     super.initState();
     _recordAt = DateTime.now();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _loadItems());
+    if (widget.initialItems.isNotEmpty) {
+      _items = _selectableItems(widget.initialItems);
+      _loading = false;
+      if (_items.isNotEmpty) {
+        _selected = _items.firstWhere(
+          (item) => item.name == '日常',
+          orElse: () => _items.first,
+        );
+      }
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _loadItems());
+    }
+  }
+
+  List<PointItemModel> _selectableItems(List<PointItemModel> raw) {
+    const allowedNames = [
+      '关心', '陪伴', '理解', '成长', '责任', '仪式感', '激情', '日常', '纪念过去',
+    ];
+    return raw
+        .where((item) => item.name != PointsRepository.randomBonusItemName)
+        .where((item) => allowedNames.contains(item.name))
+        .toList()
+      ..sort((a, b) => allowedNames.indexOf(a.name).compareTo(allowedNames.indexOf(b.name)));
   }
 
   @override
@@ -132,70 +154,29 @@ class _RecordPointScreenState extends State<RecordPointScreen> {
     setState(() => _saving = true);
     try {
       final noteText = _noteController.text.trim();
-      final repo = context.read<PointsRepository>();
-      final depositsRepo = context.read<DepositsRepository>();
-      ({PointRecordModel? record, int bonus, bool bonusOk})? randomResult;
-
-      if (_rewardMode == _RewardMode.normal) {
-        final label = '${_selected!.name}${noteText.isNotEmpty ? '：$noteText' : ''}';
-        randomResult = await repo.addRecordWithRandomBonus(
+      final result = await context.read<OfflineRecordQueue>().submit(
+        OfflineRecordPayload(
           coupleSpaceId: spaceId,
-          partnerId: partnerId,
-          currentUserId: currentUserId,
+          authorUserId: currentUserId,
+          partnerUserId: partnerId,
           pointItemId: _selected!.id,
-          points: pointsTenths,
-          note: noteText.isEmpty ? null : noteText,
-          sourceLabel: label,
-          loveDimension: _selected?.loveDimension,
-          recordAt: _recordAt,
-        );
-        if (randomResult!.record == null) throw Exception('记录失败，请稍后重试');
-      } else {
-        final mainRecord = await repo.addRecord(
-          coupleSpaceId: spaceId,
-          userId: partnerId,
-          pointItemId: _selected!.id,
+          pointItemName: _selected!.name,
           points: pointsTenths,
           recordAt: _recordAt,
+          isDomineering: _rewardMode == _RewardMode.domineering,
+          randomBonus: _rewardMode == _RewardMode.normal
+              ? sampleRandomBonus(pointsTenths)
+              : 0,
           note: noteText.isEmpty ? null : noteText,
-          loveDimension: _selected?.loveDimension,
-        );
-        if (mainRecord == null) throw Exception('记录失败，请稍后重试');
-      }
-
+          loveDimension: _selected?.loveDimension?.dbValue,
+        ),
+      );
       if (!mounted) return;
-      var autoDepositDone = false;
-      try {
-        final defaultProduct = await depositsRepo.getDefaultDepositProduct(spaceId, partnerId);
-        if (defaultProduct != null) {
-          await depositsRepo.addToDepositOrCreate(
-            coupleSpaceId: spaceId,
-            userId: partnerId,
-            productType: defaultProduct,
-            principal: pointsTenths,
-          );
-          autoDepositDone = true;
-        }
-      } catch (_) {}
-      final suffix = autoDepositDone ? '；TA 的心意值已自动存入其默认定期。' : '';
-
-      if (!mounted) return;
-      if (_rewardMode == _RewardMode.normal && randomResult != null) {
-        if (!randomResult.bonusOk) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('记录成功，回馈发放延迟，请稍后刷新$suffix')),
-          );
-        } else {
-          final bonusDisplay = formatHeartValueDisplay(randomResult.bonus);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('为今天的体贴种下 ${formatHeartValueDisplay(pointsTenths)} 点心意；TA 也悄悄回馈了你 $bonusDisplay 点心意～$suffix')),
-          );
-        }
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('记录成功，这次是霸总模式，只给 TA 种下了心意$suffix')),
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(result == OfflineSubmitResult.synced
+            ? '已提交记录'
+            : '此次记录已加密保存，联网后自动提交'),
+      ));
       if (mounted) context.pop();
     } catch (e) {
       if (mounted) {
